@@ -1,47 +1,153 @@
-**X-LAB**
+🧪 **X-LAB**
 
-**X-LAB** is the utilities and automation branch within the **XCON | RX** ecosystem.
+**X-LAB** is the utilities and automation branch of the **XCON | RX** ecosystem.
 
-Unlike **X-SERIES** (production desktop systems) and **R-SERIES** (research/experimental projects),
-X-LAB contains small, focused tools designed to solve specific problems quickly and efficiently.
+It contains small, focused tools built to solve real workflow problems quickly: Windows helpers, automation scripts, batch utilities, and lightweight system tools.
 
 Minimal. Direct. Practical.
 
-**📦 Utilities**
 
-### 📸 screen_hotkey_listener
-Global hotkey listener that captures **all monitors** to the clipboard.
+📦 **Utilities**
 
-- **Ctrl + Shift + G** → screenshot to clipboard
-- **Ctrl + Shift + Q** → quit listener
-- Optional autostart installation (Startup folder)
 
-Folder: `screen_hotkey_listener/`
+📸 **screen_hotkey_listener**
+
+A single-file Windows utility for capturing all monitors directly to the clipboard using global hotkeys.
+
+**Highlights:**
+
+- `Ctrl + Shift + G` → capture all monitors to clipboard
+- `Ctrl + Shift + Q` → quit listener
+- Multi-monitor screenshot support
+- Clipboard image injection
+- Optional autostart through the Windows Startup folder
+- WinAPI-based hotkey registration with fallback key polling
+
+**Folder:** [`screen_hotkey_listener/`](screen_hotkey_listener/)
+
 
 ⚡ **toggle_power**
-Quick toggle between Windows power plans:
 
-- Balanced ↔ High Performance
-- Uses native `powercfg`
+A lightweight batch utility for switching between Windows power plans.
 
-Folder: `toggle_power/`
+**Highlights:**
+
+- Toggles between **Balanced** and **High Performance**
+- Uses native Windows `powercfg`
+- No GUI
+- No external dependencies
+- Useful before gaming, rendering, testing, or heavy workloads
+
+**Folder:** [`toggle_power/`](toggle_power/)
+
+
+🧪 **git_publish_pack**
+
+A Windows BAT automation pack for publishing projects from a working folder to a clean GitHub folder.
+
+```text
+working folder → GitHub folder → commit → push → tag
+```
+
+**Highlights:**
+
+* Connects a local folder to an existing GitHub repository
+* Creates backup before sync
+* Syncs working project files into a clean GitHub folder
+* Shows `git status` before commit
+* Helps with commit, push, and release tags
+* Uses local `config.bat` for project-specific paths
+
+**Folder:** [`git_publish_pack/`](git_publish_pack/)
+
 
 🖥 **Platform**
 
-Primarily **Windows** (Batch / PowerShell / lightweight helpers)
+Primarily focused on **Windows**.
 
-🔗 **Ecosystem**
+Common technologies used in this repository:
 
-- **X-SERIES** → production software systems
-- **R-SERIES** → research & experimental engineering
-- **X-LAB** → utilities & automation
+* Batch scripts
+* PowerShell
+* Native Windows commands
+* Lightweight automation helpers
+* Small OS-level utilities
+
+
+🧭 **Ecosystem**
+
+**XCON | RX** is structured into several branches:
+
+| Branch       | Purpose                                            |
+| ------------ | -------------------------------------------------- |
+| **X-SERIES** | Production desktop systems                         |
+| **R-SERIES** | Research and experimental engineering              |
+| **X-LAB**    | Utilities, scripts, and practical automation tools |
+
+X-LAB is where small tools live before they become larger systems — or remain small because that is exactly what they need to be.
+
+
+📁 **Repository Structure**
+
+```text
+X-LAB/
+│
+├── screen_hotkey_listener/
+│   └── README.md
+│
+├── toggle_power/
+│   └── README.md
+│
+├── git_publish_pack/
+│   ├── 00_connect_repo.bat
+│   ├── 01_sync.bat
+│   ├── 02_commit.bat
+│   ├── 03_push.bat
+│   ├── 04_tag.bat
+│   ├── 99_full_publish.bat
+│   ├── config.example.bat
+│   ├── CHANGELOG.md
+│   └── README.md
+│
+├── .gitignore
+├── LICENSE
+└── README.md
+```
+
+
+🚀 **Usage**
+
+Each utility has its own folder and README.
+
+Open the folder of the tool you need, read its local instructions, and run the script from there.
+
+Example:
+
+```text
+git_publish_pack/
+```
+
+or:
+
+```text
+screen_hotkey_listener/
+```
+
+or:
+
+```text
+toggle_power/
+```
+
 
 🧾 **License**
 
-MIT (unless stated otherwise per utility)
+MIT License unless stated otherwise inside a specific utility folder.
+
 
 👨‍💻 **Author**
 
 **XCON | RX**
-Telegram: [@End1essspace](https://t.me/End1essspace)
-GitHub: [End1essspace](https://github.com/End1essspace)
+
+* Telegram: [@End1essspace](https://t.me/End1essspace)
+* GitHub: [End1essspace](https://github.com/End1essspace)

@@ -1,0 +1,56 @@
+# ================================
+# X-LAB common .gitignore
+# ================================
+
+# Local tool configs
+config.bat
+**/config.bat
+*.local.bat
+*.local.ps1
+
+# Windows system files
+Thumbs.db
+desktop.ini
+$RECYCLE.BIN/
+
+# Logs / temporary files
+*.log
+*.tmp
+*.temp
+*.cache
+*.bak
+
+# Backup archives
+*.zip
+*.7z
+*.rar
+
+# Python cache / virtual environments
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+env/
+
+# PowerShell / Batch generated output
+*.ps1xml
+*.clixml
+
+# IDE / editor folders
+.vscode/
+.idea/
+
+# Build / output folders
+build/
+dist/
+out/
+target/
+bin/
+obj/
+
+# Node / frontend, just in case
+node_modules/
+
+# OS metadata
+.DS_Store
