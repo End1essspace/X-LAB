@@ -61,6 +61,24 @@ working folder → GitHub folder → commit → push → tag
 **Folder:** [`git_publish_pack/`](git_publish_pack/)
 
 
+🛡 **win_malware_case_collector**
+
+A read-only Windows malware triage and security audit collector.
+
+It collects useful evidence from a suspicious Windows system into a structured Desktop folder and ZIP archive.
+
+**Highlights:**
+
+* Quick and full collection modes
+* Read-only by design
+* Collects processes, services, scheduled tasks, startup entries, registry persistence, network state, DNS cache, Defender status, and event logs
+* Includes hashes, digital signature checks, browser extension manifests, and execution traces
+* Generates `SUMMARY_RED_FLAGS.txt`, `ERRORS_WARNINGS.txt`, and `COLLECTION_COVERAGE.txt`
+* Does not remove malware, clean the system, change registry values, or upload anything
+
+**Folder:** [`win_malware_case_collector/`](win_malware_case_collector/)
+
+
 🖥 **Platform**
 
 Primarily focused on **Windows**.
