@@ -127,6 +127,10 @@ X-LAB/
 │   ├── CHANGELOG.md
 │   └── README.md
 │
+├── win_malware_case_collector/
+│   ├── README.md
+│   └── win_malware_case_collector_v3_3.bat
+│
 ├── .gitignore
 ├── LICENSE
 └── README.md
