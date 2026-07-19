@@ -1,81 +1,102 @@
-# X-LAB Screen Capture
+# SCapturer
 
-A Windows screenshot utility being migrated from the original single-file Batch/PowerShell prototype to a standalone C# executable.
+SCapturer is a performance-first Windows screenshot utility with global hotkeys, lossless PNG persistence, and an interactive console management interface.
 
-The first migration milestone provides:
+The project began as a single-file Batch/PowerShell experiment. The active implementation is now a standalone C# application split into an executable shell and a reusable core library. The original prototype remains under `legacy/` for historical reference only.
 
-- an interactive console UI;
-- a single-instance process guard;
-- global Windows hotkeys via `RegisterHotKey`;
+## Current capabilities
+
+- interactive console UI;
+- single-instance process guard;
+- global Windows hotkeys through `RegisterHotKey`;
 - lossless PNG capture of the complete virtual desktop;
 - multi-monitor and negative-coordinate support;
-- automatic saving to a configurable folder;
+- configurable capture folder;
 - optional clipboard copy and capture sound;
-- persistent JSON settings under `%LOCALAPPDATA%`.
-
-The previous Batch implementation is retained under `legacy/` for reference only. It is no longer the target architecture.
+- persistent JSON settings;
+- automatic migration of the previous X-LAB configuration.
 
 ## Current hotkeys
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl + Shift + G` | Capture the entire virtual desktop |
-| `Ctrl + Shift + Q` | Exit the application |
+| `Ctrl + Shift + Q` | Exit SCapturer |
 
-The hotkeys are based on Windows virtual-key codes, so they use the same physical keys under English and Russian keyboard layouts.
+The hotkeys use Windows virtual-key codes and therefore refer to the same physical keys under different keyboard layouts.
+
+## Repository structure
+
+```text
+SCapturer.sln
+Directory.Build.props
+src/
+  SCapturer.App/     Console executable and application lifecycle
+  SCapturer.Core/    Capture, hotkey, settings, and persistence services
+docs/
+legacy/
+```
+
+The release executable is named `SCapturer.exe`.
 
 ## Default storage
 
-Full captures are saved as lossless PNG files to:
+New installations save full captures to:
 
 ```text
-%USERPROFILE%\Pictures\X-LAB Screenshots\Full
+%USERPROFILE%\Pictures\SCapturer\Full
 ```
 
-The folder can be changed from the console UI.
-
 Settings are stored in:
+
+```text
+%LOCALAPPDATA%\SCapturer\config.json
+```
+
+When the new settings file does not exist, SCapturer imports valid settings from the previous location without deleting the original file:
 
 ```text
 %LOCALAPPDATA%\X-LAB\ScreenCaptureTool\config.json
 ```
 
-## Requirements for development
+## Development requirements
 
-- Windows 10 or Windows 11
-- .NET 8 SDK
-
-## Run from source
-
-```powershell
-dotnet run --project .\src\ScreenCaptureTool\ScreenCaptureTool.csproj
-```
+- Windows 11 x64 — primary target;
+- Windows 10 version 2004 or newer — best-effort compatibility;
+- .NET 8 SDK.
 
 ## Build
 
 ```powershell
-dotnet build .\src\ScreenCaptureTool\ScreenCaptureTool.csproj -c Release
+dotnet build .\SCapturer.sln -c Release
+```
+
+## Run from source
+
+```powershell
+dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj
 ```
 
 ## Publish as a self-contained single EXE
 
 ```powershell
-dotnet publish .\src\ScreenCaptureTool\ScreenCaptureTool.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o .\dist\ScreenCaptureTool
+dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o .\dist\SCapturer
 ```
 
-The executable will be written to:
+Output:
 
 ```text
-dist\ScreenCaptureTool\XLab.ScreenCaptureTool.exe
+dist\SCapturer\SCapturer.exe
 ```
 
-## Migration roadmap
+## Roadmap status
 
-1. Standalone C# executable, console UI, full-desktop PNG capture — current milestone.
-2. Native region-selection overlay similar to Windows 11 Snipping Tool.
-3. Separate folders and naming policies for full captures and region captures.
-4. Editable hotkeys and richer console settings.
-5. Background/autostart mode with console show/hide control.
-6. Packaging, release artifacts, tests, and legacy Batch removal.
+- P0 — standalone C# foundation: complete;
+- P1 — SCapturer identity and solution normalization: complete in this milestone;
+- P2 — performance metrics and baseline benchmark harness: next;
+- P3 — bounded asynchronous capture pipeline;
+- P4 — high-performance rectangular snipping overlay.
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the current project boundaries.
 
 Part of **X-LAB** — practical automation utilities.

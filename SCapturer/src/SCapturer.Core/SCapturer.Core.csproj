@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>SCapturer.Core</AssemblyName>
+    <RootNamespace>SCapturer.Core</RootNamespace>
+    <Description>Capture, hotkey, settings, and persistence services for SCapturer.</Description>
+  </PropertyGroup>
+</Project>

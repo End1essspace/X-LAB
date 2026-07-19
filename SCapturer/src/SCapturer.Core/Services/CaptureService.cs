@@ -1,12 +1,12 @@
 using System.Drawing;
 using System.Drawing.Imaging;
-using System.Windows.Forms;
 using System.Runtime.InteropServices;
-using XLab.ScreenCaptureTool.Models;
+using System.Windows.Forms;
+using SCapturer.Core.Models;
 
-namespace XLab.ScreenCaptureTool.Services;
+namespace SCapturer.Core.Services;
 
-internal sealed class CaptureService
+public sealed class CaptureService
 {
     public CaptureResult CaptureFullDesktop(AppSettings settings)
     {

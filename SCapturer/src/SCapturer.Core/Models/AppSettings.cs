@@ -1,6 +1,6 @@
-namespace XLab.ScreenCaptureTool.Models;
+namespace SCapturer.Core.Models;
 
-internal sealed class AppSettings
+public sealed class AppSettings
 {
     public string FullCaptureFolder { get; set; } = CreateDefaultCaptureFolder();
 
@@ -18,6 +18,6 @@ internal sealed class AppSettings
             pictures = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
 
-        return Path.Combine(pictures, "X-LAB Screenshots", "Full");
+        return Path.Combine(pictures, "SCapturer", "Full");
     }
 }

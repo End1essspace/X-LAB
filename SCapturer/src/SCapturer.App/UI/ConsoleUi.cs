@@ -1,7 +1,7 @@
-using XLab.ScreenCaptureTool.Models;
-using XLab.ScreenCaptureTool.Services;
+using SCapturer.Core.Models;
+using SCapturer.Core.Services;
 
-namespace XLab.ScreenCaptureTool.UI;
+namespace SCapturer.App.UI;
 
 internal sealed class ConsoleUi
 {
@@ -15,8 +15,8 @@ internal sealed class ConsoleUi
     public void RenderMainMenu(AppSettings settings, string statusMessage)
     {
         Console.Clear();
-        WriteRule("X-LAB SCREEN CAPTURE");
-        Console.WriteLine(" Standalone C# migration — full-desktop capture milestone");
+        WriteRule("SCAPTURER");
+        Console.WriteLine(" Performance-first Windows screenshot utility");
         WriteRule();
         WritePair("Listener", "ACTIVE");
         WritePair("Full capture", "Ctrl + Shift + G");

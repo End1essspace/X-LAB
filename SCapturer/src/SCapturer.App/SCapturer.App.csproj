@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>SCapturer</AssemblyName>
+    <RootNamespace>SCapturer.App</RootNamespace>
+    <Product>SCapturer</Product>
+    <Title>SCapturer</Title>
+    <Description>High-performance screenshot utility with an interactive console interface.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SCapturer.Core\SCapturer.Core.csproj" />
+  </ItemGroup>
+</Project>

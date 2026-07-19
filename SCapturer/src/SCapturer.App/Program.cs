@@ -1,20 +1,20 @@
 using System.Text;
 using System.Windows.Forms;
-using XLab.ScreenCaptureTool.Services;
-using XLab.ScreenCaptureTool.UI;
+using SCapturer.App.UI;
+using SCapturer.Core.Services;
 
-namespace XLab.ScreenCaptureTool;
+namespace SCapturer.App;
 
 internal static class Program
 {
-    private const string MutexName = @"Local\XLab.ScreenCaptureTool";
+    private const string MutexName = @"Local\SCapturer.App";
 
     [STAThread]
     private static int Main()
     {
         Console.OutputEncoding = Encoding.UTF8;
         Console.InputEncoding = Encoding.UTF8;
-        Console.Title = "X-LAB Screen Capture";
+        Console.Title = "SCapturer";
 
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
@@ -27,7 +27,7 @@ internal static class Program
 
         if (!isFirstInstance)
         {
-            Console.Error.WriteLine("X-LAB Screen Capture is already running.");
+            Console.Error.WriteLine("SCapturer is already running.");
             return 2;
         }
 

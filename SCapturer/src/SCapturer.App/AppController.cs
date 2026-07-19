@@ -1,9 +1,9 @@
 using System.Diagnostics;
-using XLab.ScreenCaptureTool.Models;
-using XLab.ScreenCaptureTool.Services;
-using XLab.ScreenCaptureTool.UI;
+using SCapturer.App.UI;
+using SCapturer.Core.Models;
+using SCapturer.Core.Services;
 
-namespace XLab.ScreenCaptureTool;
+namespace SCapturer.App;
 
 internal sealed class AppController
 {

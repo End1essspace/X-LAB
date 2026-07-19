@@ -3,9 +3,9 @@ using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-namespace XLab.ScreenCaptureTool.Services;
+namespace SCapturer.Core.Services;
 
-internal sealed class HotkeyService : IDisposable
+public sealed class HotkeyService : IDisposable
 {
     private readonly ManualResetEventSlim _startupCompleted = new(false);
     private Thread? _messageThread;
@@ -29,7 +29,7 @@ internal sealed class HotkeyService : IDisposable
         _messageThread = new Thread(RunMessageLoop)
         {
             IsBackground = true,
-            Name = "X-LAB Hotkey Message Loop",
+            Name = "SCapturer Hotkey Message Loop",
         };
         _messageThread.SetApartmentState(ApartmentState.STA);
         _messageThread.Start();

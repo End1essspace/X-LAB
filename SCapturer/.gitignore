@@ -1,0 +1,22 @@
+# .NET build output
+**/bin/
+**/obj/
+
+# Published artifacts
+dist/
+artifacts/
+
+# IDE state
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+
+# Test and benchmark output
+TestResults/
+BenchmarkDotNet.Artifacts/
+
+# Local packages and temporary migration folders
+*.zip
+_step*/
