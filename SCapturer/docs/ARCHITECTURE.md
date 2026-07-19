@@ -10,8 +10,10 @@ Owns:
 
 - process entry point and single-instance mutex;
 - process-level Per-Monitor V2 initialization;
-- console lifecycle and rendering;
-- command dispatch and status presentation;
+- interactive console lifecycle;
+- page navigation and differential rendering;
+- command dispatch and text prompts;
+- settings orchestration;
 - asynchronous benchmark presentation;
 - composition of core services.
 
@@ -23,8 +25,10 @@ Owns:
 - full virtual-desktop capture;
 - rectangular snipping;
 - PNG persistence and clipboard publication;
-- global hotkeys and display-change messages;
+- global hotkey registration and live reconfiguration;
+- hotkey parsing and validation;
 - diagnostics and benchmark reports;
+- recent-capture filesystem discovery;
 - bounded capture coordination;
 - settings and application paths.
 
@@ -38,90 +42,82 @@ The coordinator remains strictly bounded:
 one active request + one coalesced pending request
 ```
 
-## P5 display topology boundary
+## P6 console boundary
 
-`DisplayTopologyService` is the single source of truth for physical monitor geometry.
+`ConsoleUi` owns:
 
-It enumerates visible monitors with:
+- the current page;
+- independent selection state for each page;
+- menu construction;
+- keyboard navigation;
+- text prompts;
+- differential terminal rendering.
 
-- `EnumDisplayMonitors`;
-- `GetMonitorInfo`.
+`AppController` owns:
 
-Each immutable snapshot contains:
+- command execution;
+- mutable application settings;
+- hotkey reconfiguration transactions;
+- recent-capture state;
+- capture and benchmark status;
+- navigation requests.
 
-- a monotonically increasing topology version;
-- the union of all physical monitor bounds;
-- each monitor device name, bounds, work area, and primary flag;
-- local or remote-session state;
-- the active Windows Forms DPI mode.
+Background services never write to the terminal. They update immutable state and request a render through `AppController`.
 
-The service intentionally avoids using primary-monitor dimensions as the capture boundary. Negative coordinates are preserved for monitors positioned left of or above the primary display.
+## Differential terminal rendering
 
-## Topology invalidation
+The UI constructs a complete logical frame for every update, then compares it with the previous normalized frame.
 
-The topology generation is invalidated by:
+Only changed lines are written through `Console.SetCursorPosition`.
 
-- `SystemEvents.DisplaySettingsChanging`;
-- `SystemEvents.DisplaySettingsChanged`;
-- `WM_DISPLAYCHANGE` received by the hotkey message window;
-- resume from sleep;
-- remote and console session transitions.
+A complete `Console.Clear` occurs only for:
 
-Refresh is debounced with a one-shot timer. There is no periodic display polling.
+- page transitions;
+- text prompts;
+- terminal-size changes;
+- cursor-control recovery.
 
-Capture requests call `AcquireStableSnapshot`. If Windows is in the middle of a display transition, capture waits for a bounded stabilization interval instead of allocating a bitmap from stale dimensions.
+This prevents the capture state, benchmark progress, and status message from flashing the complete console.
 
-## Full-capture consistency
+## Hotkey configuration
 
-`CaptureService` records one topology version before allocation and pixel acquisition.
+Hotkeys are stored as structured settings:
 
-After `CopyFromScreen`, it verifies that the topology is still current. If the version changed, the incomplete in-memory frame is discarded and the service retries once using the new stable topology. A PNG is written only from a topology-consistent frame.
+- modifier flags;
+- Windows virtual-key code.
 
-Every successful `CaptureResult` includes `CaptureDesktopContext` so diagnostics can identify:
+`HotkeyBindingService` parses display strings, validates modifier and primary-key requirements, formats bindings, and rejects duplicate SCapturer actions.
 
-- topology version;
-- monitor count;
-- virtual bounds;
-- remote-session state;
-- DPI mode.
+`HotkeyService` owns the hidden Win32 message window. Reconfiguration runs synchronously on that window's STA thread.
 
-## Snipping consistency
+The transaction is:
 
-`SnippingService` captures one stable desktop frame and associates it with one topology version.
+1. validate the complete candidate set;
+2. unregister the current set;
+3. register every candidate binding;
+4. keep the candidate only if every registration succeeds;
+5. otherwise unregister partial candidates and restore the previous set.
 
-If display topology changes before or during interaction:
+Settings are persisted only after the Windows registration transaction succeeds.
 
-1. the active selection receives a `DisplayTopologyChanged` cancellation reason;
-2. the overlay closes on its UI thread;
-3. no PNG is created;
-4. the cached frame is disposed;
-5. the next request acquires a fresh topology.
+## Recent captures
 
-`SnipOverlayForm` also listens directly for `WM_DISPLAYCHANGE`, providing a second invalidation path even if a higher-level system event is delayed.
+`RecentCaptureService` scans only the configured top-level Full and Snips folders for PNG files.
 
-## Per-Monitor V2 overlay
+It returns a bounded newest-first list and tolerates files or folders disappearing during enumeration.
 
-The process enables `HighDpiMode.PerMonitorV2` before any form handle exists.
+A successful capture is inserted directly into the in-memory recent list so the capture worker does not rescan the filesystem.
 
-The overlay uses:
+## Display topology boundary
 
-- `AutoScaleMode.None`;
-- one exact physical virtual-desktop rectangle;
-- `SetWindowPos` with negative-coordinate support;
-- `WM_DPICHANGED` handling that restores the exact physical bounds instead of accepting a DPI-scaled suggested rectangle.
+`DisplayTopologyService` remains the single source of physical monitor geometry. It uses `EnumDisplayMonitors` and `GetMonitorInfo`, preserves negative coordinates, and invalidates cached geometry through display, power, and session events.
 
-Its client coordinates therefore map directly to cached-frame pixel coordinates.
+## Capture consistency
 
-## Cancellation reasons
+Full capture verifies the topology version after pixel acquisition and retries once if geometry changed.
 
-Region cancellation is explicit:
-
-- `User` — `Esc`, right-click, or an invalid tiny selection;
-- `DisplayTopologyChanged` — stale geometry or cached frame;
-- `Shutdown` — process exit while selection is active.
-
-This distinction is propagated through `CaptureCancelledEvent` to the console UI.
+Region capture associates one cached frame with one topology version. Any topology change closes the overlay and creates no file.
 
 ## Next architectural change
 
-P6 replaces the milestone-oriented console menu with the complete interactive console management UI, including structured settings pages, hotkey editing, recent captures, and non-flickering status updates.
+P7 introduces a native GDI capture buffer and Windows Imaging Component PNG encoder behind explicit backend interfaces. The P2 benchmark and P6 console responsiveness must remain comparable.

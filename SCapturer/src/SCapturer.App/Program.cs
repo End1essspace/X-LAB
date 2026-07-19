@@ -55,13 +55,19 @@ internal static class Program
             using var captureCoordinator = new CaptureCoordinator(
                 captureService,
                 snippingService);
+            using var hotkeyService = new HotkeyService();
+            var recentCaptureService = new RecentCaptureService();
             var consoleUi = new ConsoleUi(paths);
+
             var app = new AppController(
+                paths,
                 settingsStore,
                 captureCoordinator,
                 diagnosticsStore,
                 benchmarkService,
                 displayTopology,
+                hotkeyService,
+                recentCaptureService,
                 consoleUi);
 
             return app.Run();

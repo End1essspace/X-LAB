@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SCapturer.Core.Models;
 
 namespace SCapturer.Core.Services;
 
@@ -22,8 +23,9 @@ public sealed class HotkeyService : IDisposable
 
     public event Action? DisplayConfigurationChanged;
 
-    public void Start()
+    public void Start(HotkeyBindingSet bindings)
     {
+        ArgumentNullException.ThrowIfNull(bindings);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
         if (_messageThread is not null)
@@ -31,7 +33,14 @@ public sealed class HotkeyService : IDisposable
             return;
         }
 
-        _messageThread = new Thread(RunMessageLoop)
+        if (!HotkeyBindingService.TryValidateSet(bindings, out var validationError))
+        {
+            throw new ArgumentException(validationError, nameof(bindings));
+        }
+
+        var initialBindings = bindings.CreateSnapshot();
+
+        _messageThread = new Thread(() => RunMessageLoop(initialBindings))
         {
             IsBackground = true,
             Name = "SCapturer Hotkey Message Loop",
@@ -52,11 +61,56 @@ public sealed class HotkeyService : IDisposable
         }
     }
 
-    private void RunMessageLoop()
+    public HotkeyRegistrationResult TryReconfigure(HotkeyBindingSet bindings)
+    {
+        ArgumentNullException.ThrowIfNull(bindings);
+        ObjectDisposedException.ThrowIf(_disposed, this);
+
+        if (!HotkeyBindingService.TryValidateSet(bindings, out var validationError))
+        {
+            return HotkeyRegistrationResult.Failed(validationError);
+        }
+
+        var window = _window;
+        if (window is null || !window.IsHandleCreated || window.IsDisposed)
+        {
+            return HotkeyRegistrationResult.Failed(
+                "The hotkey message window is not available.");
+        }
+
+        try
+        {
+            if (window.InvokeRequired)
+            {
+                return (HotkeyRegistrationResult)window.Invoke(
+                    new Func<HotkeyRegistrationResult>(
+                        () => window.TryApplyBindings(bindings.CreateSnapshot())));
+            }
+
+            return window.TryApplyBindings(bindings.CreateSnapshot());
+        }
+        catch (ObjectDisposedException)
+        {
+            return HotkeyRegistrationResult.Failed(
+                "The hotkey message window is shutting down.");
+        }
+        catch (InvalidOperationException exception)
+        {
+            return HotkeyRegistrationResult.Failed(exception.Message);
+        }
+        catch (Exception exception)
+        {
+            return HotkeyRegistrationResult.Failed(
+                exception.GetBaseException().Message);
+        }
+    }
+
+    private void RunMessageLoop(HotkeyBindingSet initialBindings)
     {
         try
         {
             _window = new HotkeyWindow(
+                initialBindings,
                 onReady: error =>
                 {
                     _startupException = error;
@@ -106,29 +160,36 @@ public sealed class HotkeyService : IDisposable
     {
         private const int WmDisplayChange = 0x007E;
         private const int WmHotkey = 0x0312;
+        private const uint ModAlt = 0x0001;
         private const uint ModControl = 0x0002;
         private const uint ModShift = 0x0004;
+        private const uint ModWin = 0x0008;
         private const uint ModNoRepeat = 0x4000;
         private const int FullCaptureHotkeyId = 1;
         private const int RegionCaptureHotkeyId = 2;
         private const int ExitHotkeyId = 3;
 
+        private readonly HotkeyBindingSet _initialBindings;
         private readonly Action<Exception?> _onReady;
         private readonly Action _onFullCapture;
         private readonly Action _onRegionCapture;
         private readonly Action _onExit;
         private readonly Action _onDisplayConfigurationChanged;
+
+        private HotkeyBindingSet? _currentBindings;
         private bool _registeredFullCapture;
         private bool _registeredRegionCapture;
         private bool _registeredExit;
 
         public HotkeyWindow(
+            HotkeyBindingSet initialBindings,
             Action<Exception?> onReady,
             Action onFullCapture,
             Action onRegionCapture,
             Action onExit,
             Action onDisplayConfigurationChanged)
         {
+            _initialBindings = initialBindings.CreateSnapshot();
             _onReady = onReady;
             _onFullCapture = onFullCapture;
             _onRegionCapture = onRegionCapture;
@@ -149,47 +210,13 @@ public sealed class HotkeyService : IDisposable
 
             try
             {
-                var modifiers = ModControl | ModShift | ModNoRepeat;
-
-                _registeredFullCapture = RegisterHotKey(
-                    Handle,
-                    FullCaptureHotkeyId,
-                    modifiers,
-                    (uint)Keys.G);
-
-                if (!_registeredFullCapture)
+                var result = RegisterBindingSet(_initialBindings);
+                if (!result.Success)
                 {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "Ctrl+Shift+G is unavailable.");
+                    throw new InvalidOperationException(result.ErrorMessage);
                 }
 
-                _registeredRegionCapture = RegisterHotKey(
-                    Handle,
-                    RegionCaptureHotkeyId,
-                    modifiers,
-                    (uint)Keys.S);
-
-                if (!_registeredRegionCapture)
-                {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "Ctrl+Shift+S is unavailable.");
-                }
-
-                _registeredExit = RegisterHotKey(
-                    Handle,
-                    ExitHotkeyId,
-                    modifiers,
-                    (uint)Keys.Q);
-
-                if (!_registeredExit)
-                {
-                    throw new Win32Exception(
-                        Marshal.GetLastWin32Error(),
-                        "Ctrl+Shift+Q is unavailable.");
-                }
-
+                _currentBindings = _initialBindings.CreateSnapshot();
                 Hide();
                 _onReady(null);
             }
@@ -198,6 +225,45 @@ public sealed class HotkeyService : IDisposable
                 _onReady(exception);
                 Close();
             }
+        }
+
+        public HotkeyRegistrationResult TryApplyBindings(
+            HotkeyBindingSet bindings)
+        {
+            if (!HotkeyBindingService.TryValidateSet(bindings, out var validationError))
+            {
+                return HotkeyRegistrationResult.Failed(validationError);
+            }
+
+            var previous = _currentBindings?.CreateSnapshot();
+            UnregisterAll();
+
+            var registration = RegisterBindingSet(bindings);
+            if (registration.Success)
+            {
+                _currentBindings = bindings.CreateSnapshot();
+                return registration;
+            }
+
+            UnregisterAll();
+
+            if (previous is not null)
+            {
+                var rollback = RegisterBindingSet(previous);
+                if (rollback.Success)
+                {
+                    _currentBindings = previous;
+                }
+                else
+                {
+                    _currentBindings = null;
+                    return HotkeyRegistrationResult.Failed(
+                        $"{registration.ErrorMessage} The previous hotkeys also could not be restored: " +
+                        rollback.ErrorMessage);
+                }
+            }
+
+            return registration;
         }
 
         protected override void WndProc(ref Message message)
@@ -228,22 +294,113 @@ public sealed class HotkeyService : IDisposable
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            UnregisterAll();
+            base.OnFormClosed(e);
+        }
+
+        private HotkeyRegistrationResult RegisterBindingSet(
+            HotkeyBindingSet bindings)
+        {
+            var fullResult = RegisterOne(
+                FullCaptureHotkeyId,
+                bindings.FullCapture,
+                "full capture",
+                out _registeredFullCapture);
+
+            if (!fullResult.Success)
+            {
+                return fullResult;
+            }
+
+            var regionResult = RegisterOne(
+                RegionCaptureHotkeyId,
+                bindings.RegionCapture,
+                "region capture",
+                out _registeredRegionCapture);
+
+            if (!regionResult.Success)
+            {
+                return regionResult;
+            }
+
+            return RegisterOne(
+                ExitHotkeyId,
+                bindings.Exit,
+                "exit",
+                out _registeredExit);
+        }
+
+        private HotkeyRegistrationResult RegisterOne(
+            int identifier,
+            HotkeyBinding binding,
+            string actionName,
+            out bool registered)
+        {
+            registered = RegisterHotKey(
+                Handle,
+                identifier,
+                CreateNativeModifiers(binding),
+                (uint)(binding.VirtualKey & (int)Keys.KeyCode));
+
+            if (registered)
+            {
+                return HotkeyRegistrationResult.Succeeded;
+            }
+
+            var errorCode = Marshal.GetLastWin32Error();
+            var errorText = new Win32Exception(errorCode).Message;
+
+            return HotkeyRegistrationResult.Failed(
+                $"{HotkeyBindingService.Format(binding)} is unavailable for {actionName}. " +
+                $"Windows error {errorCode}: {errorText}");
+        }
+
+        private void UnregisterAll()
+        {
             if (_registeredFullCapture)
             {
                 UnregisterHotKey(Handle, FullCaptureHotkeyId);
+                _registeredFullCapture = false;
             }
 
             if (_registeredRegionCapture)
             {
                 UnregisterHotKey(Handle, RegionCaptureHotkeyId);
+                _registeredRegionCapture = false;
             }
 
             if (_registeredExit)
             {
                 UnregisterHotKey(Handle, ExitHotkeyId);
+                _registeredExit = false;
+            }
+        }
+
+        private static uint CreateNativeModifiers(HotkeyBinding binding)
+        {
+            var modifiers = ModNoRepeat;
+
+            if (binding.Control)
+            {
+                modifiers |= ModControl;
             }
 
-            base.OnFormClosed(e);
+            if (binding.Shift)
+            {
+                modifiers |= ModShift;
+            }
+
+            if (binding.Alt)
+            {
+                modifiers |= ModAlt;
+            }
+
+            if (binding.Windows)
+            {
+                modifiers |= ModWin;
+            }
+
+            return modifiers;
         }
 
         [DllImport("user32.dll", SetLastError = true)]

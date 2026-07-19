@@ -12,6 +12,15 @@ public sealed class AppSettings
 
     public bool EnableDiagnostics { get; set; }
 
+    public HotkeyBinding FullCaptureHotkey { get; set; } =
+        HotkeyBinding.CreateDefaultFullCapture();
+
+    public HotkeyBinding RegionCaptureHotkey { get; set; } =
+        HotkeyBinding.CreateDefaultRegionCapture();
+
+    public HotkeyBinding ExitHotkey { get; set; } =
+        HotkeyBinding.CreateDefaultExit();
+
     public static AppSettings CreateDefault() => new();
 
     public AppSettings CreateSnapshot()
@@ -23,6 +32,9 @@ public sealed class AppSettings
             CopyToClipboard = CopyToClipboard,
             PlayCaptureSound = PlayCaptureSound,
             EnableDiagnostics = EnableDiagnostics,
+            FullCaptureHotkey = FullCaptureHotkey.CreateSnapshot(),
+            RegionCaptureHotkey = RegionCaptureHotkey.CreateSnapshot(),
+            ExitHotkey = ExitHotkey.CreateSnapshot(),
         };
     }
 

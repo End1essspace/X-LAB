@@ -6,7 +6,7 @@
     <RootNamespace>SCapturer.App</RootNamespace>
     <Product>SCapturer</Product>
     <Title>SCapturer</Title>
-    <Description>High-performance screenshot utility with an interactive console interface.</Description>
+    <Description>High-performance screenshot utility with an interactive page-based console interface.</Description>
   </PropertyGroup>
 
   <ItemGroup>

@@ -27,6 +27,7 @@ public sealed class SettingsStore
             var migrated = TryLoadLegacySettings();
             if (migrated is not null)
             {
+                Normalize(migrated);
                 Save(migrated);
                 return migrated;
             }
@@ -36,12 +37,19 @@ public sealed class SettingsStore
             return defaults;
         }
 
-        return LoadFromFile(_paths.SettingsFile, backUpInvalidFile: true);
+        var settings = LoadFromFile(_paths.SettingsFile, backUpInvalidFile: true);
+        if (Normalize(settings))
+        {
+            Save(settings);
+        }
+
+        return settings;
     }
 
     public void Save(AppSettings settings)
     {
         ArgumentNullException.ThrowIfNull(settings);
+        Normalize(settings);
 
         Directory.CreateDirectory(_paths.DataDirectory);
         var json = JsonSerializer.Serialize(settings, JsonOptions);
@@ -73,22 +81,8 @@ public sealed class SettingsStore
         try
         {
             var json = File.ReadAllText(filePath);
-            var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions)
+            return JsonSerializer.Deserialize<AppSettings>(json, JsonOptions)
                 ?? AppSettings.CreateDefault();
-
-            var defaults = AppSettings.CreateDefault();
-
-            if (string.IsNullOrWhiteSpace(settings.FullCaptureFolder))
-            {
-                settings.FullCaptureFolder = defaults.FullCaptureFolder;
-            }
-
-            if (string.IsNullOrWhiteSpace(settings.SnipCaptureFolder))
-            {
-                settings.SnipCaptureFolder = defaults.SnipCaptureFolder;
-            }
-
-            return settings;
         }
         catch (JsonException) when (backUpInvalidFile)
         {
@@ -101,5 +95,58 @@ public sealed class SettingsStore
             Save(defaults);
             return defaults;
         }
+    }
+
+    private static bool Normalize(AppSettings settings)
+    {
+        var changed = false;
+        var defaults = AppSettings.CreateDefault();
+
+        if (string.IsNullOrWhiteSpace(settings.FullCaptureFolder))
+        {
+            settings.FullCaptureFolder = defaults.FullCaptureFolder;
+            changed = true;
+        }
+
+        if (string.IsNullOrWhiteSpace(settings.SnipCaptureFolder))
+        {
+            settings.SnipCaptureFolder = defaults.SnipCaptureFolder;
+            changed = true;
+        }
+
+        if (!HotkeyBindingService.TryValidate(
+                settings.FullCaptureHotkey,
+                out _))
+        {
+            settings.FullCaptureHotkey = defaults.FullCaptureHotkey;
+            changed = true;
+        }
+
+        if (!HotkeyBindingService.TryValidate(
+                settings.RegionCaptureHotkey,
+                out _))
+        {
+            settings.RegionCaptureHotkey = defaults.RegionCaptureHotkey;
+            changed = true;
+        }
+
+        if (!HotkeyBindingService.TryValidate(
+                settings.ExitHotkey,
+                out _))
+        {
+            settings.ExitHotkey = defaults.ExitHotkey;
+            changed = true;
+        }
+
+        var set = HotkeyBindingService.CreateSet(settings);
+        if (!HotkeyBindingService.TryValidateSet(set, out _))
+        {
+            settings.FullCaptureHotkey = defaults.FullCaptureHotkey;
+            settings.RegionCaptureHotkey = defaults.RegionCaptureHotkey;
+            settings.ExitHotkey = defaults.ExitHotkey;
+            changed = true;
+        }
+
+        return changed;
     }
 }

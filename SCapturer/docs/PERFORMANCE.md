@@ -1,16 +1,16 @@
-# SCapturer Performance Baseline and P5 Display Hardening
+# SCapturer Performance Baseline and P6 Console UI
 
-## Stable baseline
+## Stable capture baseline
 
-The full-capture backend remains based on:
+The current full-capture backend remains based on:
 
 - `System.Drawing.Bitmap`;
 - `Graphics.CopyFromScreen`;
 - the built-in PNG encoder.
 
-The P2 benchmark report schema remains compatible through P5.
+The P2 benchmark report schema remains compatible through P6.
 
-## Existing measurements
+## Capture measurements
 
 Full capture records:
 
@@ -31,69 +31,79 @@ Region capture additionally records:
 - user interaction;
 - crop duration.
 
-## P5 topology acquisition
+## Bounded worker
 
-Monitor topology is event-driven and cached. Normal idle operation performs no monitor polling.
-
-A capture obtains the latest stable immutable snapshot. During a display transition it waits in short bounded intervals for the one-shot refresh to complete. This wait is visible in dispatch and total latency rather than hidden from diagnostics.
-
-## Full-capture retry budget
-
-When topology changes during physical pixel acquisition:
-
-- the first in-memory bitmap is disposed;
-- no PNG is written;
-- a fresh topology is acquired;
-- capture retries once.
-
-The two-attempt ceiling prevents an endless loop when a display driver or remote session is repeatedly reconfiguring the desktop.
-
-Allocation and pixel-acquisition metrics accumulate across both attempts. This exposes the real cost of a topology interruption.
-
-## Snipping invalidation
-
-A cached snipping frame is valid only for its captured topology version.
-
-Any display invalidation during selection closes the overlay and produces no PNG. SCapturer does not attempt to resize or reinterpret the stale frame because that would create incorrect region coordinates or stretched pixels.
-
-## Overlay DPI behavior
-
-The overlay has no render timer and performs no repeated screen acquisition.
-
-`WM_DPICHANGED` may be delivered when Windows changes the DPI associated with the spanning top-level window. The overlay restores its exact physical virtual-desktop rectangle with `SetWindowPos`, keeping the mapping:
+Normal captures use one STA worker with:
 
 ```text
-one overlay client pixel = one cached desktop pixel
+one active request + one coalesced pending request
 ```
 
-## Memory behavior
+The hotkey message thread and console thread do not perform capture or persistence work.
 
-While region selection is active, SCapturer holds:
+## Display consistency
 
-```text
-virtual width × virtual height × 4 × 2 bytes
-```
+Monitor topology is event-driven and cached. Capture uses a bounded stable-snapshot wait.
 
-for the original and dimmed frames. A selected-region bitmap exists only after confirmation.
+Full capture retries once if topology changes during pixel acquisition. Region capture cancels if its cached desktop frame becomes stale.
 
-A topology cancellation disposes both full-desktop frames before the worker accepts another request.
+## P6 console rendering
 
-## P5 acceptance checks
+P6 does not change the capture backend.
 
-P5 is accepted when:
+The console renderer:
 
-- a 100% and 150% mixed-DPI setup produces pixel-aligned snips;
-- monitors left of or above primary retain negative absolute coordinates;
-- changing primary display does not offset saved regions;
-- changing resolution during selection cancels without creating a file;
-- disconnecting a monitor during selection cancels safely;
-- full capture after topology change uses the new combined dimensions;
-- sleep/resume and Remote Desktop transitions do not require process restart;
-- console topology information updates without periodic polling;
-- repeated display changes do not leak forms, timers, GDI handles, or event subscriptions.
+- has no animation timer;
+- does not render from background threads;
+- compares complete logical frames;
+- rewrites only changed terminal lines;
+- performs a full clear only for page changes, prompts, resize, or recovery.
 
-See `DISPLAY_TEST_MATRIX.md` for the manual validation sequence.
+The existing 40 ms console input loop remains the only UI polling loop. No additional idle polling was introduced.
 
-## P6 comparison rule
+## Hotkey reconfiguration cost
 
-P6 must not change capture backend timings. Console rendering work must remain outside the capture worker, and UI improvements must not introduce idle polling beyond the existing bounded console input loop.
+Hotkey parsing and validation are user-triggered operations.
+
+Registration changes execute on the hotkey STA thread and do not allocate capture buffers. A failed candidate set is rolled back before control returns to the UI.
+
+No hotkey reconfiguration work occurs during idle operation.
+
+## Recent capture cost
+
+Recent-capture directory scanning occurs only:
+
+- during application startup;
+- when entering or refreshing the Recent Captures page;
+- after capture-folder changes.
+
+Successful captures are inserted directly into the in-memory list. The capture worker does not enumerate directories after every screenshot.
+
+The list is bounded to twelve UI entries.
+
+## P6 acceptance checks
+
+P6 is accepted when:
+
+- capture and benchmark timings remain within normal P5 variance;
+- pipeline status updates do not flash the complete console;
+- arrow navigation remains responsive during PNG persistence;
+- terminal resize produces one clean redraw;
+- invalid and duplicate hotkeys are rejected;
+- unavailable Windows hotkeys leave the previous set active;
+- successful hotkey changes work immediately and survive restart;
+- recent capture opening does not block the capture worker;
+- idle CPU does not materially increase from P5.
+
+## P7 comparison rule
+
+P7 must run the same baseline benchmark before and after native backend adoption.
+
+The native backend is accepted only when it improves p95 latency or allocations without regressing:
+
+- physical pixel correctness;
+- mixed-DPI behavior;
+- overlay cancellation;
+- clipboard publication;
+- console responsiveness;
+- resource stability.

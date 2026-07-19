@@ -1,22 +1,24 @@
 # SCapturer
 
-SCapturer is a performance-first Windows screenshot utility with global hotkeys, lossless PNG persistence, an interactive console management interface, built-in diagnostics, a bounded asynchronous capture pipeline, and a native rectangular snipping overlay.
+SCapturer is a performance-first Windows screenshot utility with lossless full-desktop capture, a cached-frame rectangular snipping overlay, global hotkeys, diagnostics, and an interactive console management interface.
 
 The active implementation is a standalone C# application split into an executable shell and a reusable Windows capture core. The original Batch/PowerShell prototype remains under `legacy/` for historical reference only.
 
 ## Current capabilities
 
-- interactive console UI;
-- single-instance process guard;
-- global Windows hotkeys through `RegisterHotKey`;
+- interactive page-based console UI;
+- arrow-key, Enter, Escape, and numeric navigation;
+- differential console rendering without repeated `Console.Clear`;
+- configurable global hotkeys with conflict validation and rollback;
 - lossless PNG capture of the complete physical virtual desktop;
 - rectangular region capture from one cached desktop frame;
 - native monitor enumeration through `EnumDisplayMonitors` and `GetMonitorInfo`;
 - Per-Monitor V2 DPI awareness;
 - mixed-DPI and negative-coordinate support;
 - automatic display-topology invalidation;
-- safe response to monitor connect/disconnect, resolution changes, sleep/resume, and remote-session transitions;
-- separate configurable folders for full captures and snips;
+- safe monitor, sleep/resume, and remote-session transitions;
+- separate configurable folders for full captures and region captures;
+- recent-capture browser with file and folder opening;
 - optional clipboard copy and capture sound;
 - persistent JSON settings;
 - per-stage timings and optional JSON Lines diagnostics;
@@ -25,7 +27,7 @@ The active implementation is a standalone C# application split into an executabl
 - one active capture plus one coalesced pending request;
 - graceful shutdown that cancels an active overlay.
 
-## Current hotkeys
+## Default hotkeys
 
 | Shortcut | Action |
 | --- | --- |
@@ -33,41 +35,70 @@ The active implementation is a standalone C# application split into an executabl
 | `Ctrl + Shift + S` | Open the rectangular snipping overlay |
 | `Ctrl + Shift + Q` | Exit SCapturer after active file work finishes |
 
-Hotkeys use `MOD_NOREPEAT`, so holding a combination does not continuously enqueue requests.
+Hotkeys are editable from the **Hotkeys** page. SCapturer validates syntax and duplicate bindings, asks Windows to reserve the new combinations, and restores the previous registrations if an update fails.
+
+Supported input examples:
+
+```text
+Ctrl+Shift+G
+Ctrl+Alt+PrintScreen
+Win+Shift+S
+Alt+F10
+```
+
+## Console management UI
+
+The dashboard provides access to:
+
+1. full-desktop capture;
+2. region capture;
+3. capture settings;
+4. hotkey settings;
+5. save locations;
+6. diagnostics and benchmark;
+7. recent captures;
+8. product information;
+9. exit.
+
+Navigation:
+
+- `↑` / `↓` or `J` / `K` — change selection;
+- `Enter` — activate;
+- `1`–`9` — activate a visible menu item;
+- `Esc` or `Backspace` — return to the dashboard;
+- `R` on Recent Captures — refresh;
+- `F` on Recent Captures — open the selected file's folder.
+
+The renderer compares the next frame with the previous frame and rewrites only changed console lines. `Console.Clear` is reserved for page transitions, text prompts, terminal resize recovery, and fallback rendering.
+
+See [`docs/CONSOLE_UI.md`](docs/CONSOLE_UI.md) for the UI contract.
 
 ## Display and DPI model
 
-SCapturer enables `HighDpiMode.PerMonitorV2` before creating any Windows Forms handles.
+SCapturer enables `HighDpiMode.PerMonitorV2` before creating Windows Forms handles.
 
-The capture rectangle is not derived from a primary-monitor size or a DPI-virtualized system metric. `DisplayTopologyService` enumerates every visible monitor with native Win32 APIs and builds one physical-pixel virtual desktop rectangle from their monitor bounds.
+`DisplayTopologyService` enumerates visible monitors with native Win32 APIs and creates one physical-pixel virtual-desktop rectangle. Negative coordinates are retained for monitors positioned left of or above the primary display.
 
-The console displays the current topology, for example:
+If display topology changes during a full capture, the in-memory frame is discarded and capture retries once. If display topology changes during region selection, the cached frame is invalidated and selection is cancelled without creating a PNG.
 
-```text
-Displays        : 2 | PerMonitorV2 | LOCAL
-Virtual desktop : 4480×1440 @ (-1920,0) | v4
-```
-
-A topology version is attached to every successful capture. If Windows changes the display configuration during pixel acquisition, full capture retries once with a fresh topology. If the display changes while the snipping overlay is active, the cached frame is invalidated and selection is cancelled instead of saving incorrect coordinates.
+See [`docs/DISPLAY_TEST_MATRIX.md`](docs/DISPLAY_TEST_MATRIX.md).
 
 ## Rectangular snipping
 
-Region capture follows this pipeline:
+Region capture:
 
-1. acquire a stable physical display-topology snapshot;
-2. capture the complete virtual desktop once;
-3. create one dimmed cached frame;
-4. display a topmost overlay across the exact physical virtual desktop;
-5. update only selection rendering while the mouse moves;
-6. crop the selected rectangle from the original cached frame;
-7. save the crop as lossless PNG;
-8. optionally publish it to the clipboard.
-
-The desktop is not captured again while the selection rectangle moves. The saved PNG never contains dimming, borders, or the size label.
+1. acquires one stable physical display-topology snapshot;
+2. captures the complete virtual desktop once;
+3. creates one dimmed cached frame;
+4. displays a topmost overlay over the exact physical desktop;
+5. updates only dirty selection regions while the mouse moves;
+6. crops from the original cached frame;
+7. saves lossless PNG;
+8. optionally publishes the result to the clipboard.
 
 Controls:
 
-- left mouse drag — select a rectangle;
+- left mouse drag — select;
 - `Esc` — cancel;
 - right mouse button — cancel.
 
@@ -79,9 +110,9 @@ Full and region requests share one dedicated STA worker:
 one active capture + one coalesced pending capture
 ```
 
-Repeated requests replace only the pending request. SCapturer never starts parallel overlays or parallel PNG encoders.
+Repeated requests replace only the pending request. SCapturer does not create parallel overlays or parallel PNG encoders.
 
-## Default storage
+## Storage
 
 Full captures:
 
@@ -114,6 +145,7 @@ SCapturer.sln
 Directory.Build.props
 src/
   SCapturer.App/
+    UI/
   SCapturer.Core/
     Benchmarking/
     Diagnostics/
@@ -141,7 +173,7 @@ dotnet build .\SCapturer.sln -c Release
 ## Run from source
 
 ```powershell
-dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj
+dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release
 ```
 
 ## Publish as a self-contained single EXE
@@ -157,9 +189,8 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P2 — performance metrics and baseline benchmark: complete;
 - P3 — bounded asynchronous capture pipeline: complete;
 - P4 — high-performance rectangular snipping overlay: complete;
-- P5 — mixed-DPI and multi-monitor hardening: complete in this milestone;
-- P6 — interactive console UI v1: next.
-
-See [`docs/DISPLAY_TEST_MATRIX.md`](docs/DISPLAY_TEST_MATRIX.md) for the required display validation matrix.
+- P5 — mixed-DPI and multi-monitor hardening: complete;
+- P6 — interactive console UI v1: complete in this milestone;
+- P7 — native GDI and WIC capture pipeline: next.
 
 Part of **X-LAB** — practical automation utilities.
