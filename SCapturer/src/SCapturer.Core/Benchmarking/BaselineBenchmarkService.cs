@@ -157,6 +157,7 @@ public sealed class BaselineBenchmarkService
             FullCaptureHotkey = sourceSettings.FullCaptureHotkey.CreateSnapshot(),
             RegionCaptureHotkey = sourceSettings.RegionCaptureHotkey.CreateSnapshot(),
             ExitHotkey = sourceSettings.ExitHotkey.CreateSnapshot(),
+            ToggleConsoleHotkey = sourceSettings.ToggleConsoleHotkey.CreateSnapshot(),
         };
     }
 

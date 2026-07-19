@@ -8,7 +8,7 @@ namespace SCapturer.App.UI;
 internal sealed class ConsoleUi
 {
     private const int MinimumUsefulWidth = 64;
-    private const int MinimumUsefulHeight = 22;
+    private const int MinimumUsefulHeight = 28;
 
     private readonly AppPaths _paths;
     private readonly Dictionary<ConsolePage, int> _selectionByPage = new();
@@ -36,6 +36,12 @@ internal sealed class ConsoleUi
     {
         _currentPage = page;
         _forceFullRedraw = true;
+    }
+
+    public void Invalidate()
+    {
+        _forceFullRedraw = true;
+        _lastRenderedLines = Array.Empty<string>();
     }
 
     public ConsoleCommand HandleKey(
@@ -99,9 +105,12 @@ internal sealed class ConsoleUi
             return GetSelectedCommand(entries);
         }
 
-        var digit = key.KeyChar is >= '1' and <= '9'
-            ? key.KeyChar - '1'
-            : -1;
+        var digit = key.KeyChar switch
+        {
+            >= '1' and <= '9' => key.KeyChar - '1',
+            '0' => 9,
+            _ => -1,
+        };
 
         if (digit >= 0 && digit < entries.Count)
         {
@@ -153,7 +162,8 @@ internal sealed class ConsoleUi
             Console.CursorVisible = true;
             Console.WriteLine();
         }
-        catch (IOException)
+        catch (Exception exception)
+            when (exception is IOException or InvalidOperationException)
         {
             // The console may already be detached during process teardown.
         }
@@ -199,7 +209,8 @@ internal sealed class ConsoleUi
         ConsoleViewModel model)
     {
         lines.Add(
-            $" Listener  ACTIVE   Pipeline  {FormatPipeline(model.Pipeline),-28} " +
+            $" Listener  ACTIVE   Console  {(model.ConsoleVisible ? "VISIBLE" : "HIDDEN"),-7} " +
+            $"Pipeline  {FormatPipeline(model.Pipeline),-24} " +
             $"Benchmark  {(model.BenchmarkInProgress ? "RUNNING" : "IDLE")}");
 
         var backendFallback = model.BackendSelection.IsFallback ? " · FALLBACK" : string.Empty;
@@ -240,6 +251,9 @@ internal sealed class ConsoleUi
             case ConsolePage.RecentCaptures:
                 AddRecentCaptures(lines, model, width);
                 break;
+            case ConsolePage.Background:
+                AddBackground(lines, model, width);
+                break;
             case ConsolePage.About:
                 AddAbout(lines, model);
                 break;
@@ -254,6 +268,7 @@ internal sealed class ConsoleUi
     {
         lines.Add($" Full capture   {HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)}");
         lines.Add($" Region capture {HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)}");
+        lines.Add($" Console        {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
         lines.Add($" Exit           {HotkeyBindingService.Format(model.Settings.ExitHotkey)}");
         lines.Add(string.Empty);
 
@@ -309,6 +324,8 @@ internal sealed class ConsoleUi
             $" Region capture  {HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)}");
         lines.Add(
             $" Exit            {HotkeyBindingService.Format(model.Settings.ExitHotkey)}");
+        lines.Add(
+            $" Toggle console  {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
         lines.Add(string.Empty);
         lines.Add(" Enter combinations as text, for example Ctrl+Alt+G or Win+Shift+S.");
         lines.Add(" SCapturer validates duplicates and asks Windows to reserve the new binding.");
@@ -360,6 +377,37 @@ internal sealed class ConsoleUi
         lines.Add(" Enter opens the selected file · F opens its folder · R refreshes");
     }
 
+    private void AddBackground(
+        ICollection<string> lines,
+        ConsoleViewModel model,
+        int width)
+    {
+        var startupState = model.Autostart.ErrorMessage is not null
+            ? "ERROR"
+            : model.Autostart.IsEnabled
+                ? model.Autostart.IsCurrent ? "ENABLED" : "STALE"
+                : "DISABLED";
+
+        lines.Add($" Console state   {(model.ConsoleVisible ? "VISIBLE" : "HIDDEN")}");
+        lines.Add($" Launch mode     {(model.StartedInBackground ? "BACKGROUND" : "INTERACTIVE")}");
+        lines.Add($" Console hotkey  {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
+        lines.Add($" Windows startup {startupState}");
+        lines.Add(" Startup command");
+        lines.Add("   " + Truncate(model.Autostart.ExpectedCommand, width - 4));
+
+        if (!string.IsNullOrWhiteSpace(model.Autostart.ErrorMessage))
+        {
+            lines.Add(" Startup error   " + Truncate(model.Autostart.ErrorMessage!, width - 18));
+        }
+        else if (model.Autostart.IsEnabled && !model.Autostart.IsCurrent)
+        {
+            lines.Add(" Startup note    Existing registration points to another build or path.");
+        }
+
+        lines.Add(string.Empty);
+        AddMenu(lines, model);
+    }
+
     private void AddAbout(
         ICollection<string> lines,
         ConsoleViewModel model)
@@ -372,6 +420,7 @@ internal sealed class ConsoleUi
         lines.Add(" Storage     atomic PNG commit · independent clipboard dispatcher");
         lines.Add(" Geometry    Per-Monitor V2 · physical virtual-desktop coordinates");
         lines.Add(" Interface   interactive console UI with differential rendering");
+        lines.Add(" Lifecycle   background mode · single-instance IPC · user autostart");
         lines.Add(string.Empty);
         lines.Add(" Part of X-LAB.");
         lines.Add(string.Empty);
@@ -391,7 +440,12 @@ internal sealed class ConsoleUi
         {
             var entry = entries[index];
             var marker = index == selected ? ">" : " ";
-            var number = index < 9 ? $"{index + 1}. " : "   ";
+            var number = index switch
+            {
+                < 9 => $"{index + 1}. ",
+                9 => "0. ",
+                _ => "   ",
+            };
             var text = $"{marker} {number}{entry.Label}";
 
             if (availableWidth > 0)
@@ -418,8 +472,8 @@ internal sealed class ConsoleUi
 
         lines.Add(
             _currentPage == ConsolePage.Dashboard
-                ? " ↑/↓ select · Enter activate · 1-9 shortcuts"
-                : " ↑/↓ select · Enter activate · Esc back · 1-9 shortcuts");
+                ? " ↑/↓ select · Enter activate · 1-9/0 shortcuts"
+                : " ↑/↓ select · Enter activate · Esc back · 1-9/0 shortcuts");
     }
 
     private IReadOnlyList<MenuEntry> BuildMenuEntries(ConsoleViewModel model)
@@ -435,6 +489,7 @@ internal sealed class ConsoleUi
                 Entry("Save locations", ConsoleAction.OpenSaveLocations),
                 Entry("Diagnostics and benchmark", ConsoleAction.OpenDiagnostics),
                 Entry("Recent captures", ConsoleAction.OpenRecentCaptures),
+                Entry("Background and startup", ConsoleAction.OpenBackground),
                 Entry("About", ConsoleAction.OpenAbout),
                 Entry("Exit SCapturer", ConsoleAction.Exit),
             ],
@@ -464,6 +519,9 @@ internal sealed class ConsoleUi
                 Entry(
                     $"Edit exit · {HotkeyBindingService.Format(model.Settings.ExitHotkey)}",
                     ConsoleAction.EditExitHotkey),
+                Entry(
+                    $"Edit toggle console · {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}",
+                    ConsoleAction.EditToggleConsoleHotkey),
                 Entry("Restore default hotkeys", ConsoleAction.RestoreDefaultHotkeys),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
@@ -501,6 +559,19 @@ internal sealed class ConsoleUi
             ],
 
             ConsolePage.RecentCaptures => BuildRecentEntries(model),
+
+            ConsolePage.Background =>
+            [
+                Entry(
+                    model.Autostart.IsEnabled && model.Autostart.IsCurrent
+                        ? "Disable Windows autostart"
+                        : model.Autostart.IsEnabled
+                            ? "Repair Windows autostart registration"
+                            : "Enable Windows autostart",
+                    ConsoleAction.ToggleAutostart),
+                Entry("Hide console and continue in background", ConsoleAction.HideConsole),
+                Entry("Back to dashboard", ConsoleAction.Back),
+            ],
 
             ConsolePage.About =>
             [
@@ -723,6 +794,7 @@ internal sealed class ConsoleUi
             ConsolePage.SaveLocations => "SAVE LOCATIONS",
             ConsolePage.Diagnostics => "DIAGNOSTICS",
             ConsolePage.RecentCaptures => "RECENT CAPTURES",
+            ConsolePage.Background => "BACKGROUND AND STARTUP",
             ConsolePage.About => "ABOUT",
             _ => page.ToString().ToUpperInvariant(),
         };

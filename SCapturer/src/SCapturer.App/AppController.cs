@@ -1,4 +1,6 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
+using SCapturer.App.Lifecycle;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Capture;
@@ -14,6 +16,7 @@ internal sealed class AppController
 {
     private readonly AppPaths _paths;
     private readonly SettingsStore _settingsStore;
+    private readonly AutostartService _autostartService;
     private readonly CaptureCoordinator _captureCoordinator;
     private readonly CaptureDiagnosticsStore _diagnosticsStore;
     private readonly BaselineBenchmarkService _benchmarkService;
@@ -23,13 +26,19 @@ internal sealed class AppController
     private readonly HotkeyService _hotkeyService;
     private readonly RecentCaptureService _recentCaptureService;
     private readonly ConsoleUi _consoleUi;
+    private readonly ConsoleVisibilityService _consoleVisibility;
+    private readonly AppInstanceService _instanceService;
+    private readonly bool _startedInBackground;
+    private readonly bool _globalHotkeysEnabled;
     private readonly CancellationTokenSource _shutdown = new();
+    private readonly ConcurrentQueue<AppInstanceCommand> _externalCommands = new();
     private readonly object _uiStateGate = new();
 
     private AppSettings _settings;
     private CaptureResult? _lastCapture;
     private CapturePipelineSnapshot _pipelineSnapshot = CapturePipelineSnapshot.Initial;
     private IReadOnlyList<RecentCaptureItem> _recentCaptures;
+    private AutostartStatus _autostartStatus;
     private Task? _benchmarkTask;
     private string _statusMessage = "Ready.";
     private int _benchmarkInProgress;
@@ -38,6 +47,7 @@ internal sealed class AppController
     public AppController(
         AppPaths paths,
         SettingsStore settingsStore,
+        AutostartService autostartService,
         CaptureCoordinator captureCoordinator,
         CaptureDiagnosticsStore diagnosticsStore,
         BaselineBenchmarkService benchmarkService,
@@ -46,10 +56,15 @@ internal sealed class AppController
         DisplayTopologyService displayTopology,
         HotkeyService hotkeyService,
         RecentCaptureService recentCaptureService,
-        ConsoleUi consoleUi)
+        ConsoleUi consoleUi,
+        ConsoleVisibilityService consoleVisibility,
+        AppInstanceService instanceService,
+        bool startedInBackground,
+        bool globalHotkeysEnabled)
     {
         _paths = paths;
         _settingsStore = settingsStore;
+        _autostartService = autostartService;
         _captureCoordinator = captureCoordinator;
         _diagnosticsStore = diagnosticsStore;
         _benchmarkService = benchmarkService;
@@ -59,64 +74,102 @@ internal sealed class AppController
         _hotkeyService = hotkeyService;
         _recentCaptureService = recentCaptureService;
         _consoleUi = consoleUi;
+        _consoleVisibility = consoleVisibility;
+        _instanceService = instanceService;
+        _startedInBackground = startedInBackground;
+        _globalHotkeysEnabled = globalHotkeysEnabled;
 
         _settings = _settingsStore.Load();
         _recentCaptures = _recentCaptureService.Load(_settings, maximumCount: 12);
+        _autostartStatus = _autostartService.GetStatus();
 
         _captureCoordinator.StateChanged += OnPipelineStateChanged;
         _captureCoordinator.CaptureCompleted += OnCaptureCompleted;
         _captureCoordinator.CaptureCancelled += OnCaptureCancelled;
         _captureCoordinator.CaptureFailed += OnCaptureFailed;
         _displayTopology.TopologyChanged += OnDisplayTopologyChanged;
+        _instanceService.CommandReceived += OnInstanceCommandReceived;
+    }
+
+    internal void QueueExternalCommand(AppInstanceCommand command)
+    {
+        if (command == AppInstanceCommand.None)
+        {
+            return;
+        }
+
+        _externalCommands.Enqueue(command);
+        RequestRender();
     }
 
     public int Run()
     {
         _captureCoordinator.Start();
 
-        _hotkeyService.FullCaptureRequested += CaptureFullFromHotkey;
-        _hotkeyService.RegionCaptureRequested += CaptureRegionFromHotkey;
-        _hotkeyService.ExitRequested += RequestExitFromHotkey;
-        _hotkeyService.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
-        _hotkeyService.Start(HotkeyBindingService.CreateSet(GetSettingsSnapshot()));
-
         var initialSettings = GetSettingsSnapshot();
-        SetStatus(
-            $"Listener active. Full {HotkeyBindingService.Format(initialSettings.FullCaptureHotkey)}; " +
-            $"region {HotkeyBindingService.Format(initialSettings.RegionCaptureHotkey)}; " +
-            $"exit {HotkeyBindingService.Format(initialSettings.ExitHotkey)}.");
+
+        if (_globalHotkeysEnabled)
+        {
+            _hotkeyService.FullCaptureRequested += CaptureFullFromHotkey;
+            _hotkeyService.RegionCaptureRequested += CaptureRegionFromHotkey;
+            _hotkeyService.ExitRequested += RequestExitFromHotkey;
+            _hotkeyService.ToggleConsoleRequested += RequestToggleConsoleFromHotkey;
+            _hotkeyService.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
+            _hotkeyService.Start(HotkeyBindingService.CreateSet(initialSettings));
+
+            SetStatus(
+                $"Listener active. Full {HotkeyBindingService.Format(initialSettings.FullCaptureHotkey)}; " +
+                $"region {HotkeyBindingService.Format(initialSettings.RegionCaptureHotkey)}; " +
+                $"console {HotkeyBindingService.Format(initialSettings.ToggleConsoleHotkey)}; " +
+                $"exit {HotkeyBindingService.Format(initialSettings.ExitHotkey)}.");
+        }
+        else
+        {
+            SetStatus(
+                "Reliability isolation active. Global hotkeys are disabled; " +
+                "capture and lifecycle commands remain available through IPC.");
+        }
 
         try
         {
             while (!_shutdown.IsCancellationRequested)
             {
-                if (_consoleUi.HasWindowSizeChanged())
+                ProcessExternalCommands();
+                var consoleVisible = _consoleVisibility.IsVisible;
+
+                if (consoleVisible && _consoleUi.HasWindowSizeChanged())
                 {
                     RequestRender();
                 }
 
-                if (Interlocked.Exchange(ref _renderRequested, 0) == 1)
+                if (consoleVisible &&
+                    Interlocked.Exchange(ref _renderRequested, 0) == 1)
                 {
                     _consoleUi.Render(CreateViewModel());
                 }
 
-                if (Console.KeyAvailable)
+                if (consoleVisible && Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(intercept: true);
                     var command = _consoleUi.HandleKey(key, CreateViewModel());
                     ExecuteCommand(command);
                 }
 
-                Thread.Sleep(40);
+                Thread.Sleep(consoleVisible ? 40 : 200);
             }
         }
         finally
         {
             _displayTopology.TopologyChanged -= OnDisplayTopologyChanged;
-            _hotkeyService.FullCaptureRequested -= CaptureFullFromHotkey;
-            _hotkeyService.RegionCaptureRequested -= CaptureRegionFromHotkey;
-            _hotkeyService.ExitRequested -= RequestExitFromHotkey;
-            _hotkeyService.DisplayConfigurationChanged -= OnHotkeyDisplayConfigurationChanged;
+            if (_globalHotkeysEnabled)
+            {
+                _hotkeyService.FullCaptureRequested -= CaptureFullFromHotkey;
+                _hotkeyService.RegionCaptureRequested -= CaptureRegionFromHotkey;
+                _hotkeyService.ExitRequested -= RequestExitFromHotkey;
+                _hotkeyService.ToggleConsoleRequested -= RequestToggleConsoleFromHotkey;
+                _hotkeyService.DisplayConfigurationChanged -= OnHotkeyDisplayConfigurationChanged;
+            }
+            _instanceService.CommandReceived -= OnInstanceCommandReceived;
 
             _shutdown.Cancel();
             _captureCoordinator.Stop(TimeSpan.FromSeconds(15));
@@ -167,6 +220,10 @@ internal sealed class AppController
                 RefreshRecentCaptures(showStatus: false);
                 Navigate(ConsolePage.RecentCaptures);
                 return;
+            case ConsoleAction.OpenBackground:
+                RefreshAutostartStatus();
+                Navigate(ConsolePage.Background);
+                return;
             case ConsoleAction.OpenAbout:
                 Navigate(ConsolePage.About);
                 return;
@@ -179,6 +236,12 @@ internal sealed class AppController
             case ConsoleAction.ToggleDiagnostics:
                 SaveSettings(ToggleDiagnostics());
                 return;
+            case ConsoleAction.ToggleAutostart:
+                ToggleAutostart();
+                return;
+            case ConsoleAction.HideConsole:
+                HideConsole("Console hidden. Use the configured console hotkey or launch SCapturer again to show it.");
+                return;
             case ConsoleAction.CycleCaptureBackend:
                 SaveSettings(CycleCaptureBackend());
                 return;
@@ -190,6 +253,9 @@ internal sealed class AppController
                 return;
             case ConsoleAction.EditExitHotkey:
                 EditHotkey(HotkeyAction.Exit);
+                return;
+            case ConsoleAction.EditToggleConsoleHotkey:
+                EditHotkey(HotkeyAction.ToggleConsole);
                 return;
             case ConsoleAction.RestoreDefaultHotkeys:
                 RestoreDefaultHotkeys();
@@ -512,6 +578,7 @@ internal sealed class AppController
         candidate.FullCaptureHotkey = HotkeyBinding.CreateDefaultFullCapture();
         candidate.RegionCaptureHotkey = HotkeyBinding.CreateDefaultRegionCapture();
         candidate.ExitHotkey = HotkeyBinding.CreateDefaultExit();
+        candidate.ToggleConsoleHotkey = HotkeyBinding.CreateDefaultToggleConsole();
 
         ApplyHotkeySettings(candidate, "Default hotkeys restored.");
     }
@@ -545,6 +612,8 @@ internal sealed class AppController
                 _settings.FullCaptureHotkey = candidate.FullCaptureHotkey.CreateSnapshot();
                 _settings.RegionCaptureHotkey = candidate.RegionCaptureHotkey.CreateSnapshot();
                 _settings.ExitHotkey = candidate.ExitHotkey.CreateSnapshot();
+                _settings.ToggleConsoleHotkey =
+                    candidate.ToggleConsoleHotkey.CreateSnapshot();
             }
 
             SetStatus(successMessage);
@@ -828,6 +897,111 @@ internal sealed class AppController
         }
     }
 
+    private void ToggleAutostart()
+    {
+        try
+        {
+            _autostartStatus =
+                _autostartStatus.IsEnabled && _autostartStatus.IsCurrent
+                    ? _autostartService.Disable()
+                    : _autostartService.Enable();
+
+            SetStatus(_autostartStatus.IsEnabled
+                ? "Windows autostart enabled. SCapturer will launch hidden after sign-in."
+                : "Windows autostart disabled.");
+        }
+        catch (Exception exception)
+        {
+            RefreshAutostartStatus();
+            SetStatus($"Could not change Windows autostart: {exception.Message}");
+        }
+    }
+
+    private void RefreshAutostartStatus()
+    {
+        _autostartStatus = _autostartService.GetStatus();
+        RequestRender();
+    }
+
+    private void OnInstanceCommandReceived(AppInstanceCommand command)
+    {
+        QueueExternalCommand(command);
+    }
+
+    private void RequestToggleConsoleFromHotkey()
+    {
+        QueueExternalCommand(AppInstanceCommand.ToggleConsole);
+    }
+
+    private void ProcessExternalCommands()
+    {
+        while (_externalCommands.TryDequeue(out var command))
+        {
+            switch (command)
+            {
+                case AppInstanceCommand.ShowConsole:
+                    ShowConsole("Console shown by activation request.");
+                    break;
+                case AppInstanceCommand.HideConsole:
+                    HideConsole("Console hidden by activation request.");
+                    break;
+                case AppInstanceCommand.ToggleConsole:
+                    ToggleConsole();
+                    break;
+                case AppInstanceCommand.CaptureFull:
+                    QueueCapture(
+                        CaptureKind.FullDesktop,
+                        Stopwatch.GetTimestamp(),
+                        "InstanceCommandFull");
+                    break;
+                case AppInstanceCommand.CaptureRegion:
+                    QueueCapture(
+                        CaptureKind.Region,
+                        Stopwatch.GetTimestamp(),
+                        "InstanceCommandSnip");
+                    break;
+                case AppInstanceCommand.CancelRegion:
+                    _captureCoordinator.CancelActiveRegion();
+                    SetStatus("Active region selection cancellation requested.");
+                    break;
+                case AppInstanceCommand.Exit:
+                    SetStatus("Exit command received. Finishing active file operations.");
+                    _shutdown.Cancel();
+                    break;
+                case AppInstanceCommand.None:
+                default:
+                    break;
+            }
+        }
+    }
+
+    private void ToggleConsole()
+    {
+        if (_consoleVisibility.IsVisible)
+        {
+            HideConsole(
+                "Console hidden. Use the configured console hotkey or launch SCapturer again to show it.");
+            return;
+        }
+
+        ShowConsole("Console shown.");
+    }
+
+    private void ShowConsole(string status)
+    {
+        if (_consoleVisibility.Show())
+        {
+            _consoleUi.Invalidate();
+            SetStatus(status);
+        }
+    }
+
+    private void HideConsole(string status)
+    {
+        SetStatus(status);
+        _consoleVisibility.Hide();
+    }
+
     private void RequestExitFromHotkey()
     {
         SetStatus("Exit hotkey received. Finishing active file operations.");
@@ -859,6 +1033,9 @@ internal sealed class AppController
                 Pipeline: _pipelineSnapshot,
                 Topology: _displayTopology.GetSnapshot(),
                 BackendSelection: _backendProvider.GetSelection(settings.CaptureBackend),
+                ConsoleVisible: _consoleVisibility.IsVisible,
+                StartedInBackground: _startedInBackground,
+                Autostart: _autostartStatus,
                 BenchmarkInProgress: Volatile.Read(ref _benchmarkInProgress) == 1,
                 RecentCaptures: _recentCaptures.ToArray());
         }
@@ -915,6 +1092,7 @@ internal sealed class AppController
             HotkeyAction.FullCapture => settings.FullCaptureHotkey,
             HotkeyAction.RegionCapture => settings.RegionCaptureHotkey,
             HotkeyAction.Exit => settings.ExitHotkey,
+            HotkeyAction.ToggleConsole => settings.ToggleConsoleHotkey,
             _ => throw new ArgumentOutOfRangeException(nameof(action)),
         };
     }
@@ -935,6 +1113,9 @@ internal sealed class AppController
             case HotkeyAction.Exit:
                 settings.ExitHotkey = binding.CreateSnapshot();
                 break;
+            case HotkeyAction.ToggleConsole:
+                settings.ToggleConsoleHotkey = binding.CreateSnapshot();
+                break;
             default:
                 throw new ArgumentOutOfRangeException(nameof(action));
         }
@@ -947,6 +1128,7 @@ internal sealed class AppController
             HotkeyAction.FullCapture => "Full capture",
             HotkeyAction.RegionCapture => "Region capture",
             HotkeyAction.Exit => "Exit",
+            HotkeyAction.ToggleConsole => "Toggle console",
             _ => action.ToString(),
         };
     }

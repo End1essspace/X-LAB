@@ -32,7 +32,8 @@ public static class HotkeyBindingService
         return new HotkeyBindingSet(
             settings.FullCaptureHotkey.CreateSnapshot(),
             settings.RegionCaptureHotkey.CreateSnapshot(),
-            settings.ExitHotkey.CreateSnapshot());
+            settings.ExitHotkey.CreateSnapshot(),
+            settings.ToggleConsoleHotkey.CreateSnapshot());
     }
 
     public static bool TryParse(
@@ -201,22 +202,36 @@ public static class HotkeyBindingService
             return false;
         }
 
-        if (AreEquivalent(bindings.FullCapture, bindings.RegionCapture))
+        if (!TryValidate(bindings.ToggleConsole, out errorMessage))
         {
-            errorMessage = "Full capture and region capture use the same hotkey.";
+            errorMessage = $"Toggle console hotkey: {errorMessage}";
             return false;
         }
 
-        if (AreEquivalent(bindings.FullCapture, bindings.Exit))
+        var namedBindings = new (string Name, HotkeyBinding Binding)[]
         {
-            errorMessage = "Full capture and exit use the same hotkey.";
-            return false;
-        }
+            ("Full capture", bindings.FullCapture),
+            ("Region capture", bindings.RegionCapture),
+            ("Exit", bindings.Exit),
+            ("Toggle console", bindings.ToggleConsole),
+        };
 
-        if (AreEquivalent(bindings.RegionCapture, bindings.Exit))
+        for (var leftIndex = 0; leftIndex < namedBindings.Length; leftIndex++)
         {
-            errorMessage = "Region capture and exit use the same hotkey.";
-            return false;
+            for (var rightIndex = leftIndex + 1;
+                 rightIndex < namedBindings.Length;
+                 rightIndex++)
+            {
+                if (AreEquivalent(
+                        namedBindings[leftIndex].Binding,
+                        namedBindings[rightIndex].Binding))
+                {
+                    errorMessage =
+                        $"{namedBindings[leftIndex].Name} and " +
+                        $"{namedBindings[rightIndex].Name} use the same hotkey.";
+                    return false;
+                }
+            }
         }
 
         errorMessage = string.Empty;

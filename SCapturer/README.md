@@ -15,11 +15,11 @@ The application publishes as one C# executable while retaining a reusable Window
 - display-topology invalidation and safe retry/cancellation;
 - reference GDI+ capture backend;
 - native GDI `CreateDIBSection` and `BitBlt` backend;
-- native WIC PNG encoding from direct BGRA memory;
+- native WIC PNG persistence from direct BGRA memory;
 - atomic same-directory PNG commit after explicit disk flush;
 - stale temporary-file cleanup and destination free-space checks;
 - automatic fallback when a configured capture folder is unavailable;
-- dedicated STA clipboard dispatcher with bounded exponential retry;
+- dedicated STA clipboard dispatcher with bounded retry;
 - clipboard failures reported as warnings without invalidating saved PNG files;
 - backend availability fallback;
 - selected-backend baseline benchmark;
@@ -28,7 +28,13 @@ The application publishes as one C# executable while retaining a reusable Window
 - recent-capture browser;
 - optional clipboard copy, sound, and diagnostics;
 - one bounded STA capture worker;
-- graceful overlay and process shutdown.
+- graceful overlay and process shutdown;
+- hidden background operation without restarting capture services;
+- configurable console show/hide hotkey;
+- single-instance activation and command forwarding;
+- current-user Windows autostart with stale-path detection;
+- dependency-free automated logic test suite;
+- isolated resource-soak and repeated lifecycle harness.
 
 ## Default hotkeys
 
@@ -36,6 +42,7 @@ The application publishes as one C# executable while retaining a reusable Window
 | --- | --- |
 | `Ctrl + Shift + G` | Capture the complete virtual desktop |
 | `Ctrl + Shift + S` | Open rectangular region selection |
+| `Ctrl + Shift + H` | Show or hide the management console |
 | `Ctrl + Shift + Q` | Exit after active file work finishes |
 
 Hotkeys can be changed from the **Hotkeys** page.
@@ -86,16 +93,46 @@ See [`docs/BACKEND_COMPARISON.md`](docs/BACKEND_COMPARISON.md).
 4. Save Locations
 5. Diagnostics and Benchmark
 6. Recent Captures
-7. About
+7. Background and Startup
+8. About
 
 Navigation:
 
 - `↑` / `↓` or `J` / `K` — select;
 - `Enter` — activate;
-- `1`–`9` — direct visible item;
+- `1`–`9` and `0` — direct visible item;
 - `Esc` / `Backspace` — back;
 - `R` — refresh Recent Captures;
 - `F` — open selected capture folder.
+
+## Background mode and single-instance activation
+
+The application is published as a Windows executable, so background startup does not flash a console window. The management console is allocated lazily on its first show request; later hide/show operations reuse that one attachment and only change window visibility, avoiding repeated standard-handle churn.
+
+Launch hidden:
+
+```powershell
+dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release -- --background
+```
+
+The same process continues to own hotkeys, capture, clipboard, display observation, and diagnostics while the console is hidden. Use the configurable console hotkey or launch SCapturer again to show the existing console. A second copy forwards its command through a current-user named pipe and exits.
+
+Supported executable arguments:
+
+```text
+--background
+--show
+--hide
+--toggle-console
+--capture-full
+--capture-region
+--cancel-region
+--exit
+```
+
+Windows autostart is managed from the **Background and Startup** page and registers the current executable under the current-user Run key with `--background`.
+
+See [`docs/BACKGROUND_AND_AUTOSTART.md`](docs/BACKGROUND_AND_AUTOSTART.md).
 
 ## Storage
 
@@ -123,12 +160,6 @@ Diagnostics:
 %LOCALAPPDATA%\SCapturer\diagnostics
 ```
 
-PNG persistence uses a temporary file in the destination directory, flushes it to disk, then renames it to the final `.png` name. A crash or encoder failure cannot expose a partial screenshot under its final name.
-
-If a configured capture folder cannot be created or written, SCapturer saves to the corresponding default folder and records a warning. Clipboard publication is independent: a locked clipboard never deletes or invalidates an already committed PNG.
-
-See [`docs/STORAGE_AND_CLIPBOARD.md`](docs/STORAGE_AND_CLIPBOARD.md).
-
 ## Repository structure
 
 ```text
@@ -136,6 +167,7 @@ SCapturer.sln
 Directory.Build.props
 src/
   SCapturer.App/
+    Lifecycle/
     UI/
   SCapturer.Core/
     Benchmarking/
@@ -147,6 +179,10 @@ src/
     Pipeline/
     Services/
     Snipping/
+tests/
+  SCapturer.Tests/
+tools/
+  SCapturer.Reliability/
 docs/
 legacy/
 ```
@@ -169,6 +205,24 @@ dotnet build .\SCapturer.sln -c Release
 dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release
 ```
 
+## Automated verification
+
+Run deterministic logic tests:
+
+```powershell
+dotnet run --project .\tests\SCapturer.Tests\SCapturer.Tests.csproj -c Release
+```
+
+Run the default isolated Windows reliability workload after a Release build:
+
+```powershell
+dotnet run --project .\tools\SCapturer.Reliability\SCapturer.Reliability.csproj -c Release -- --captures 100 --console-cycles 30 --region-cancel-cycles 5 --process-cycles 10
+```
+
+The reliability baseline is taken after representative full-capture, IPC, console show/hide, and region-cancellation warm-up so the resource gates measure steady-state growth rather than first-use framework caches.
+
+Reports are written under `artifacts/reliability`. See [`docs/RELIABILITY.md`](docs/RELIABILITY.md).
+
 ## Publish as one self-contained EXE
 
 ```powershell
@@ -186,7 +240,8 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P6 — interactive console UI v1: complete;
 - P7 — native GDI and WIC capture pipeline: complete;
 - P8 — GPU backend research gate: deferred unless measurements justify it;
-- P9 — atomic PNG persistence and clipboard hardening: complete in this milestone;
-- P10 — background lifecycle and Windows autostart: next.
+- P9 — atomic PNG persistence and clipboard hardening: complete;
+- P10 — background lifecycle and Windows autostart: complete;
+- P11 — automated reliability tests and resource-soak validation: complete.
 
 Part of **X-LAB** — practical automation utilities.

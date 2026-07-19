@@ -21,6 +21,8 @@ public sealed class HotkeyService : IDisposable
 
     public event Action? ExitRequested;
 
+    public event Action? ToggleConsoleRequested;
+
     public event Action? DisplayConfigurationChanged;
 
     public void Start(HotkeyBindingSet bindings)
@@ -119,6 +121,7 @@ public sealed class HotkeyService : IDisposable
                 onFullCapture: () => FullCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
                 onRegionCapture: () => RegionCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
                 onExit: () => ExitRequested?.Invoke(),
+                onToggleConsole: () => ToggleConsoleRequested?.Invoke(),
                 onDisplayConfigurationChanged: () => DisplayConfigurationChanged?.Invoke());
 
             Application.Run(_window);
@@ -168,18 +171,21 @@ public sealed class HotkeyService : IDisposable
         private const int FullCaptureHotkeyId = 1;
         private const int RegionCaptureHotkeyId = 2;
         private const int ExitHotkeyId = 3;
+        private const int ToggleConsoleHotkeyId = 4;
 
         private readonly HotkeyBindingSet _initialBindings;
         private readonly Action<Exception?> _onReady;
         private readonly Action _onFullCapture;
         private readonly Action _onRegionCapture;
         private readonly Action _onExit;
+        private readonly Action _onToggleConsole;
         private readonly Action _onDisplayConfigurationChanged;
 
         private HotkeyBindingSet? _currentBindings;
         private bool _registeredFullCapture;
         private bool _registeredRegionCapture;
         private bool _registeredExit;
+        private bool _registeredToggleConsole;
 
         public HotkeyWindow(
             HotkeyBindingSet initialBindings,
@@ -187,6 +193,7 @@ public sealed class HotkeyService : IDisposable
             Action onFullCapture,
             Action onRegionCapture,
             Action onExit,
+            Action onToggleConsole,
             Action onDisplayConfigurationChanged)
         {
             _initialBindings = initialBindings.CreateSnapshot();
@@ -194,6 +201,7 @@ public sealed class HotkeyService : IDisposable
             _onFullCapture = onFullCapture;
             _onRegionCapture = onRegionCapture;
             _onExit = onExit;
+            _onToggleConsole = onToggleConsole;
             _onDisplayConfigurationChanged = onDisplayConfigurationChanged;
 
             ShowInTaskbar = false;
@@ -286,6 +294,9 @@ public sealed class HotkeyService : IDisposable
                     case ExitHotkeyId:
                         _onExit();
                         return;
+                    case ToggleConsoleHotkeyId:
+                        _onToggleConsole();
+                        return;
                 }
             }
 
@@ -323,11 +334,22 @@ public sealed class HotkeyService : IDisposable
                 return regionResult;
             }
 
-            return RegisterOne(
+            var exitResult = RegisterOne(
                 ExitHotkeyId,
                 bindings.Exit,
                 "exit",
                 out _registeredExit);
+
+            if (!exitResult.Success)
+            {
+                return exitResult;
+            }
+
+            return RegisterOne(
+                ToggleConsoleHotkeyId,
+                bindings.ToggleConsole,
+                "toggle console",
+                out _registeredToggleConsole);
         }
 
         private HotkeyRegistrationResult RegisterOne(
@@ -373,6 +395,12 @@ public sealed class HotkeyService : IDisposable
             {
                 UnregisterHotKey(Handle, ExitHotkeyId);
                 _registeredExit = false;
+            }
+
+            if (_registeredToggleConsole)
+            {
+                UnregisterHotKey(Handle, ToggleConsoleHotkeyId);
+                _registeredToggleConsole = false;
             }
         }
 

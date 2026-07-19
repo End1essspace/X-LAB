@@ -2,6 +2,7 @@ using SCapturer.Core.Capture;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
+using SCapturer.Core.Services;
 
 namespace SCapturer.App.UI;
 
@@ -13,6 +14,7 @@ internal enum ConsolePage
     SaveLocations,
     Diagnostics,
     RecentCaptures,
+    Background,
     About,
 }
 
@@ -28,14 +30,18 @@ internal enum ConsoleAction
     OpenSaveLocations,
     OpenDiagnostics,
     OpenRecentCaptures,
+    OpenBackground,
     OpenAbout,
     ToggleClipboard,
     ToggleSound,
     ToggleDiagnostics,
+    ToggleAutostart,
+    HideConsole,
     CycleCaptureBackend,
     EditFullHotkey,
     EditRegionHotkey,
     EditExitHotkey,
+    EditToggleConsoleHotkey,
     RestoreDefaultHotkeys,
     ChangeFullFolder,
     ChangeSnipFolder,
@@ -66,5 +72,8 @@ internal sealed record ConsoleViewModel(
     CapturePipelineSnapshot Pipeline,
     DisplayTopologySnapshot Topology,
     CaptureBackendSelection BackendSelection,
+    bool ConsoleVisible,
+    bool StartedInBackground,
+    AutostartStatus Autostart,
     bool BenchmarkInProgress,
     IReadOnlyList<RecentCaptureItem> RecentCaptures);

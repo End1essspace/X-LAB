@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>SCapturer.Reliability</AssemblyName>
+    <RootNamespace>SCapturer.Reliability</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SCapturer.Core\SCapturer.Core.csproj" />
+  </ItemGroup>
+</Project>

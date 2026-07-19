@@ -1,12 +1,12 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>SCapturer</AssemblyName>
     <RootNamespace>SCapturer.App</RootNamespace>
     <Product>SCapturer</Product>
     <Title>SCapturer</Title>
-    <Description>High-performance screenshot utility with an interactive page-based console interface.</Description>
+    <Description>High-performance screenshot utility with interactive and background lifecycle modes.</Description>
   </PropertyGroup>
 
   <ItemGroup>

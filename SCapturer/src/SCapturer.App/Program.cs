@@ -1,5 +1,5 @@
-using System.Text;
 using System.Windows.Forms;
+using SCapturer.App.Lifecycle;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Capture;
@@ -14,18 +14,32 @@ namespace SCapturer.App;
 
 internal static class Program
 {
-    private const string MutexName = @"Local\SCapturer.App";
+    private const string DisableHotkeysEnvironmentVariable =
+        "SCAPTURER_DISABLE_HOTKEYS";
+    private const string NonInteractiveEnvironmentVariable =
+        "SCAPTURER_NONINTERACTIVE";
 
     [STAThread]
-    private static int Main()
+    private static int Main(string[] args)
     {
-        Console.OutputEncoding = Encoding.UTF8;
-        Console.InputEncoding = Encoding.UTF8;
-        Console.Title = "SCapturer";
+        var launchOptions = AppLaunchOptions.Parse(args);
+        var consoleVisibility = new ConsoleVisibilityService();
+        var globalHotkeysEnabled = !IsEnvironmentFlagEnabled(
+            DisableHotkeysEnvironmentVariable);
+        var nonInteractive = IsEnvironmentFlagEnabled(
+            NonInteractiveEnvironmentVariable);
+
+        if (!launchOptions.IsValid)
+        {
+            consoleVisibility.Show();
+            Console.Error.WriteLine(launchOptions.ErrorMessage);
+            return 4;
+        }
 
         var highDpiConfigured = Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         if (!highDpiConfigured && Application.HighDpiMode != HighDpiMode.PerMonitorV2)
         {
+            consoleVisibility.Show();
             Console.Error.WriteLine(
                 "SCapturer could not enable Per-Monitor V2 DPI awareness.");
             return 3;
@@ -36,19 +50,42 @@ internal static class Program
 
         using var instanceMutex = new Mutex(
             initiallyOwned: true,
-            name: MutexName,
+            name: AppInstanceService.MutexName,
             createdNew: out var isFirstInstance);
 
         if (!isFirstInstance)
         {
-            Console.Error.WriteLine("SCapturer is already running.");
+            if (AppInstanceService.TrySend(
+                    launchOptions.SecondaryCommand,
+                    TimeSpan.FromSeconds(3),
+                    out var activationError))
+            {
+                return 0;
+            }
+
+            consoleVisibility.Show();
+            Console.Error.WriteLine(activationError);
             return 2;
+        }
+
+        if (launchOptions.PrimaryCommand == AppInstanceCommand.Exit)
+        {
+            return 0;
+        }
+
+        if (!launchOptions.StartHidden && !consoleVisibility.Show())
+        {
+            return 6;
         }
 
         try
         {
+            using var instanceService = new AppInstanceService();
+            instanceService.Start();
+
             var paths = new AppPaths();
             var settingsStore = new SettingsStore(paths);
+            var autostartService = new AutostartService();
             using var displayTopology = new DisplayTopologyService();
             var backendProvider = new CaptureBackendProvider();
             var persistenceService = new CapturePersistenceService();
@@ -79,6 +116,7 @@ internal static class Program
             var app = new AppController(
                 paths,
                 settingsStore,
+                autostartService,
                 captureCoordinator,
                 diagnosticsStore,
                 benchmarkService,
@@ -87,19 +125,42 @@ internal static class Program
                 displayTopology,
                 hotkeyService,
                 recentCaptureService,
-                consoleUi);
+                consoleUi,
+                consoleVisibility,
+                instanceService,
+                launchOptions.StartHidden,
+                globalHotkeysEnabled);
+
+            if (launchOptions.PrimaryCommand != AppInstanceCommand.None)
+            {
+                app.QueueExternalCommand(launchOptions.PrimaryCommand);
+            }
 
             return app.Run();
         }
         catch (Exception exception)
         {
+            consoleVisibility.Show();
             Console.Error.WriteLine();
             Console.Error.WriteLine("Fatal error:");
             Console.Error.WriteLine(exception);
             Console.Error.WriteLine();
-            Console.Error.WriteLine("Press any key to close.");
-            Console.ReadKey(intercept: true);
+            if (!nonInteractive)
+            {
+                Console.Error.WriteLine("Press any key to close.");
+                Console.ReadKey(intercept: true);
+            }
+
             return 1;
         }
+    }
+
+    private static bool IsEnvironmentFlagEnabled(string variableName)
+    {
+        var value = Environment.GetEnvironmentVariable(variableName);
+        return value is not null &&
+            (value.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+             value.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+             value.Equals("yes", StringComparison.OrdinalIgnoreCase));
     }
 }

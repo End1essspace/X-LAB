@@ -144,6 +144,13 @@ public sealed class CaptureCoordinator : IDisposable
         return result;
     }
 
+    public void CancelActiveRegion(
+        CaptureCancellationReason reason = CaptureCancellationReason.User)
+    {
+        ObjectDisposedException.ThrowIf(_disposed, this);
+        _snippingService.CancelActiveSelection(reason);
+    }
+
     public bool Stop(TimeSpan timeout)
     {
         CapturePipelineSnapshot? stoppingSnapshot = null;

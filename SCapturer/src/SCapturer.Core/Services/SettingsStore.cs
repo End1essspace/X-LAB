@@ -145,12 +145,21 @@ public sealed class SettingsStore
             changed = true;
         }
 
+        if (!HotkeyBindingService.TryValidate(
+                settings.ToggleConsoleHotkey,
+                out _))
+        {
+            settings.ToggleConsoleHotkey = defaults.ToggleConsoleHotkey;
+            changed = true;
+        }
+
         var set = HotkeyBindingService.CreateSet(settings);
         if (!HotkeyBindingService.TryValidateSet(set, out _))
         {
             settings.FullCaptureHotkey = defaults.FullCaptureHotkey;
             settings.RegionCaptureHotkey = defaults.RegionCaptureHotkey;
             settings.ExitHotkey = defaults.ExitHotkey;
+            settings.ToggleConsoleHotkey = defaults.ToggleConsoleHotkey;
             changed = true;
         }
 

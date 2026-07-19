@@ -5,6 +5,7 @@ public enum HotkeyAction
     FullCapture,
     RegionCapture,
     Exit,
+    ToggleConsole,
 }
 
 public sealed class HotkeyBinding
@@ -60,19 +61,31 @@ public sealed class HotkeyBinding
             VirtualKey = 'Q',
         };
     }
+
+    public static HotkeyBinding CreateDefaultToggleConsole()
+    {
+        return new HotkeyBinding
+        {
+            Control = true,
+            Shift = true,
+            VirtualKey = 'H',
+        };
+    }
 }
 
 public sealed record HotkeyBindingSet(
     HotkeyBinding FullCapture,
     HotkeyBinding RegionCapture,
-    HotkeyBinding Exit)
+    HotkeyBinding Exit,
+    HotkeyBinding ToggleConsole)
 {
     public HotkeyBindingSet CreateSnapshot()
     {
         return new HotkeyBindingSet(
             FullCapture.CreateSnapshot(),
             RegionCapture.CreateSnapshot(),
-            Exit.CreateSnapshot());
+            Exit.CreateSnapshot(),
+            ToggleConsole.CreateSnapshot());
     }
 }
 

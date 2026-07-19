@@ -88,9 +88,20 @@ Controls:
 
 Recent history is filesystem-derived and does not require a database.
 
+### Background and Startup
+
+Provides:
+
+- current console visibility;
+- interactive/background launch mode;
+- configurable console hotkey;
+- Windows autostart state;
+- stale autostart registration repair;
+- a command to hide the console while keeping SCapturer running.
+
 ### About
 
-Displays the current runtime, capture, geometry, and interface boundaries.
+Displays the current runtime, capture, storage, geometry, interface, and lifecycle boundaries.
 
 ## Navigation
 
@@ -100,7 +111,7 @@ Global console controls:
 - `J` / `K` — alternative selection controls;
 - `Home` / `End` — jump to first or last item;
 - `Enter` — activate selected item;
-- `1`–`9` — activate a visible menu item directly;
+- `1`–`9` and `0` — activate a visible menu item directly;
 - `Esc` / `Backspace` — return to Dashboard.
 
 Selection is retained independently for each page.
@@ -129,7 +140,7 @@ Capture-pipeline state changes therefore update the status area without repeated
 
 ## Resize behavior
 
-When the terminal is below the minimum useful dimensions, the UI displays a compact resize message instead of drawing a truncated management page.
+When the terminal is below the minimum useful dimensions (64×28 in P10), the UI displays a compact resize message instead of drawing a truncated management page.
 
 A resize invalidates the previous frame and triggers one full redraw at the new dimensions.
 
@@ -171,3 +182,8 @@ Current warning categories:
 
 - storage fallback;
 - clipboard publication.
+
+
+## Hidden-console behavior
+
+The console renderer and input reader run only while the console window is visible. When hidden, the controller continues processing hotkeys, IPC commands, captures, and shutdown requests at a reduced management-loop cadence. Showing the console invalidates the previous terminal frame and performs one clean redraw.

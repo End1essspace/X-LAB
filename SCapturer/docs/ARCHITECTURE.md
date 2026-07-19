@@ -14,7 +14,9 @@ Owns:
 - page navigation and differential rendering;
 - command dispatch and settings orchestration;
 - backend comparison presentation and recommendation persistence;
-- composition of core services.
+- composition of core services;
+- background console lifecycle;
+- single-instance command routing.
 
 ### `SCapturer.Core`
 
@@ -120,6 +122,22 @@ The native frame releases managed, GDI, and memory resources in deterministic or
 
 P8 remains a conditional research gate. It is deferred unless measured P7 workload data demonstrates that another backend is likely to provide material value.
 
-## Next architectural change
+## P10 lifecycle boundary
 
-P10 adds background lifecycle, single-instance activation, console show/hide, and Windows autostart.
+`SCapturer.App` is a `WinExe`. `ConsoleVisibilityService` owns console attachment state: background mode allocates no console until management UI is first requested; after that first allocation, hide/show changes only the console window visibility. The process keeps one stable console attachment instead of repeatedly opening and closing standard handles. The SCapturer process and all capture services remain unchanged.
+
+`AppInstanceService` owns a current-user named-pipe server. A secondary invocation discovers the existing process through the local mutex, forwards one semantic command, and exits. The IPC thread only enqueues commands; `AppController` executes them on its controller loop.
+
+`AutostartService` owns the current-user Run value. It reports disabled, current, stale, or error state and always registers the executable with `--background`.
+
+The configurable console hotkey is part of the same transactional registration set as the capture and exit hotkeys.
+
+## P11 reliability boundary
+
+`SCapturer.Tests` validates deterministic logic through a dependency-free executable test runner. The test assembly receives internal visibility from App and Core but is never referenced by production projects.
+
+`SCapturer.Reliability` is an external process harness. It starts the real application with an isolated instance suffix and data directory, drives production IPC commands, samples Windows process resources, and writes immutable JSON/JSONL/Markdown evidence under `artifacts/reliability`.
+
+The harness disables global hotkey registration only for its isolated process to avoid conflicts with a normal user instance. Capture, snipping, persistence, console attachment, named-pipe activation, and graceful shutdown remain production code paths.
+
+P11 introduces no new capture worker and no instrumentation loop inside the shipping application.

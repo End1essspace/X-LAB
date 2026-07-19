@@ -4,6 +4,6 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>SCapturer.Core</AssemblyName>
     <RootNamespace>SCapturer.Core</RootNamespace>
-    <Description>Reference and native capture backends, WIC encoding, display topology, snipping, pipeline, diagnostics, configurable hotkeys, recent captures, settings, atomic persistence, and clipboard services for SCapturer.</Description>
+    <Description>Reference and native capture backends, WIC encoding, display topology, snipping, pipeline, diagnostics, configurable hotkeys, recent captures, settings, autostart, atomic persistence, and clipboard services for SCapturer.</Description>
   </PropertyGroup>
 </Project>

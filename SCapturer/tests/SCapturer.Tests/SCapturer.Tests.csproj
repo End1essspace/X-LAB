@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <AssemblyName>SCapturer.Tests</AssemblyName>
+    <RootNamespace>SCapturer.Tests</RootNamespace>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\SCapturer.App\SCapturer.App.csproj" />
+    <ProjectReference Include="..\..\src\SCapturer.Core\SCapturer.Core.csproj" />
+  </ItemGroup>
+</Project>

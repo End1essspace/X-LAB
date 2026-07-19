@@ -25,6 +25,9 @@ public sealed class AppSettings
     public HotkeyBinding ExitHotkey { get; set; } =
         HotkeyBinding.CreateDefaultExit();
 
+    public HotkeyBinding ToggleConsoleHotkey { get; set; } =
+        HotkeyBinding.CreateDefaultToggleConsole();
+
     public static AppSettings CreateDefault() => new();
 
     public AppSettings CreateSnapshot()
@@ -40,6 +43,7 @@ public sealed class AppSettings
             FullCaptureHotkey = FullCaptureHotkey.CreateSnapshot(),
             RegionCaptureHotkey = RegionCaptureHotkey.CreateSnapshot(),
             ExitHotkey = ExitHotkey.CreateSnapshot(),
+            ToggleConsoleHotkey = ToggleConsoleHotkey.CreateSnapshot(),
         };
     }
 

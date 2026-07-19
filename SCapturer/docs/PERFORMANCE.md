@@ -136,3 +136,18 @@ P9 is accepted when:
 - fallback saves include a structured warning;
 - repeated captures do not accumulate temporary files;
 - the clipboard dispatcher and capture worker remain single-instance and bounded.
+
+
+## P10 background lifecycle
+
+P10 does not create a second capture worker or a polling IPC loop. The named-pipe server blocks asynchronously until another invocation connects.
+
+When the console is visible, the existing management loop retains its 40 ms cadence. When hidden, it uses a 200 ms cadence and performs no terminal rendering or keyboard polling. Global hotkeys, display events, named-pipe activation, capture, persistence, and clipboard publication remain event-driven on their existing threads.
+
+P10 acceptance requires no material increase in idle CPU, handles, or warm working set after repeatedly showing and hiding the console.
+
+## P11 reliability gates
+
+P11 measures resource growth after warm-up rather than comparing process-start values. The default soak gate permits bounded runtime variance but rejects linear accumulation: GDI and USER deltas must remain within 8, process handles within 32, threads within 3, private-memory growth within the greater of 48 MB or 20%, and working-set growth within the greater of 64 MB or 30%.
+
+The resource harness also requires zero capture timeouts, zero IPC command failures, zero unexpected region PNG files, zero remaining `.scapturer.tmp` files, and successful graceful exit for every repeated process cycle.
