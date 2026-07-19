@@ -1,3 +1,4 @@
+
 namespace SCapturer.Core.Services;
 
 public sealed class AppPaths

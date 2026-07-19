@@ -1,3 +1,4 @@
+
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using SCapturer.Core.Models;
@@ -25,9 +26,11 @@ public sealed class BaselineBenchmarkService
     public BenchmarkRunResult Run(
         AppSettings sourceSettings,
         int measuredIterations = 10,
-        Action<BenchmarkProgress>? progress = null)
+        Action<BenchmarkProgress>? progress = null,
+        CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(sourceSettings);
+        cancellationToken.ThrowIfCancellationRequested();
 
         if (measuredIterations < 3)
         {
@@ -52,6 +55,7 @@ public sealed class BaselineBenchmarkService
 
         try
         {
+            cancellationToken.ThrowIfCancellationRequested();
             progress?.Invoke(new BenchmarkProgress("Warm-up", 1, 1));
             var warmup = _captureService.CaptureFullDesktop(
                 benchmarkSettings,
@@ -62,6 +66,7 @@ public sealed class BaselineBenchmarkService
 
             for (var iteration = 1; iteration <= measuredIterations; iteration++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
                 progress?.Invoke(new BenchmarkProgress(
                     "Measured capture",
                     iteration,
@@ -81,6 +86,7 @@ public sealed class BaselineBenchmarkService
                 TryDelete(result.FilePath);
             }
 
+            cancellationToken.ThrowIfCancellationRequested();
             var summary = CreateSummary(samples);
             var first = samples[0];
 

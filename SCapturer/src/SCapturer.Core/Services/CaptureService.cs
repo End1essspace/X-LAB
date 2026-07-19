@@ -5,6 +5,7 @@ using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Models;
+using SCapturer.Core.Pipeline;
 
 namespace SCapturer.Core.Services;
 
@@ -13,7 +14,8 @@ public sealed class CaptureService
     public CaptureResult CaptureFullDesktop(
         AppSettings settings,
         long requestTimestamp = 0,
-        string trigger = "Console")
+        string trigger = "Console",
+        Action<CapturePipelineStage>? stageChanged = null)
     {
         ArgumentNullException.ThrowIfNull(settings);
 
@@ -31,15 +33,18 @@ public sealed class CaptureService
             throw new InvalidOperationException("Windows reported an invalid virtual desktop size.");
         }
 
+        stageChanged?.Invoke(CapturePipelineStage.DirectoryPreparation);
         var stageStarted = Stopwatch.GetTimestamp();
         Directory.CreateDirectory(settings.FullCaptureFolder);
         var filePath = CreateUniqueFilePath(settings.FullCaptureFolder, "Screenshot");
         var directoryPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
 
+        stageChanged?.Invoke(CapturePipelineStage.BitmapAllocation);
         stageStarted = Stopwatch.GetTimestamp();
         using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppPArgb);
         var bitmapAllocationMilliseconds = ElapsedMilliseconds(stageStarted);
 
+        stageChanged?.Invoke(CapturePipelineStage.PixelAcquisition);
         stageStarted = Stopwatch.GetTimestamp();
         using (var graphics = Graphics.FromImage(bitmap))
         {
@@ -54,6 +59,7 @@ public sealed class CaptureService
 
         var pixelAcquisitionMilliseconds = ElapsedMilliseconds(stageStarted);
 
+        stageChanged?.Invoke(CapturePipelineStage.PngPersistence);
         stageStarted = Stopwatch.GetTimestamp();
         bitmap.Save(filePath, ImageFormat.Png);
         var fileInfo = new FileInfo(filePath);
@@ -62,6 +68,7 @@ public sealed class CaptureService
         var clipboardMilliseconds = 0d;
         if (settings.CopyToClipboard)
         {
+            stageChanged?.Invoke(CapturePipelineStage.ClipboardPublication);
             stageStarted = Stopwatch.GetTimestamp();
             SetClipboardImageWithRetry(bitmap);
             clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
@@ -70,6 +77,7 @@ public sealed class CaptureService
         var soundMilliseconds = 0d;
         if (settings.PlayCaptureSound)
         {
+            stageChanged?.Invoke(CapturePipelineStage.SoundDispatch);
             stageStarted = Stopwatch.GetTimestamp();
             System.Media.SystemSounds.Asterisk.Play();
             soundMilliseconds = ElapsedMilliseconds(stageStarted);
@@ -93,6 +101,8 @@ public sealed class CaptureService
             ManagedAllocatedBytes: Math.Max(0, allocatedAfter - allocatedBefore),
             WorkingSetBeforeBytes: workingSetBefore,
             WorkingSetAfterBytes: workingSetAfter);
+
+        stageChanged?.Invoke(CapturePipelineStage.Completed);
 
         return new CaptureResult(
             filePath,

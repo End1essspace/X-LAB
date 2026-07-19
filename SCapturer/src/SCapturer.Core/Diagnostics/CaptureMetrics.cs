@@ -1,3 +1,4 @@
+
 namespace SCapturer.Core.Diagnostics;
 
 public sealed record CaptureMetrics(

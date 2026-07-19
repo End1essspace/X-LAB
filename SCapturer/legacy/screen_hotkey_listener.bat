@@ -1,3 +1,4 @@
+
 @echo off
 REM --- one-time autostart install (Startup folder) ---
 if /i "%~1"=="--install" goto :INSTALL

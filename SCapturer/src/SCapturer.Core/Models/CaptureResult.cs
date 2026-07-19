@@ -1,3 +1,4 @@
+
 using SCapturer.Core.Diagnostics;
 
 namespace SCapturer.Core.Models;

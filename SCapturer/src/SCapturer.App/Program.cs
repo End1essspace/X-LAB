@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Diagnostics;
+using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
 
 namespace SCapturer.App;
@@ -40,10 +41,11 @@ internal static class Program
             var captureService = new CaptureService();
             var diagnosticsStore = new CaptureDiagnosticsStore(paths);
             var benchmarkService = new BaselineBenchmarkService(captureService, paths);
+            using var captureCoordinator = new CaptureCoordinator(captureService);
             var consoleUi = new ConsoleUi(paths);
             var app = new AppController(
                 settingsStore,
-                captureService,
+                captureCoordinator,
                 diagnosticsStore,
                 benchmarkService,
                 consoleUi);

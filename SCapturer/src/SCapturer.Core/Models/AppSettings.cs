@@ -12,6 +12,17 @@ public sealed class AppSettings
 
     public static AppSettings CreateDefault() => new();
 
+    public AppSettings CreateSnapshot()
+    {
+        return new AppSettings
+        {
+            FullCaptureFolder = FullCaptureFolder,
+            CopyToClipboard = CopyToClipboard,
+            PlayCaptureSound = PlayCaptureSound,
+            EnableDiagnostics = EnableDiagnostics,
+        };
+    }
+
     private static string CreateDefaultCaptureFolder()
     {
         var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);

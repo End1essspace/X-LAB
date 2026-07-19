@@ -1,4 +1,5 @@
 using SCapturer.Core.Models;
+using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
 
 namespace SCapturer.App.UI;
@@ -15,13 +16,17 @@ internal sealed class ConsoleUi
     public void RenderMainMenu(
         AppSettings settings,
         string statusMessage,
-        CaptureResult? lastCapture)
+        CaptureResult? lastCapture,
+        CapturePipelineSnapshot pipeline,
+        bool benchmarkInProgress)
     {
         Console.Clear();
         WriteRule("SCAPTURER");
-        Console.WriteLine(" Performance-first Windows screenshot utility — P2 baseline metrics");
+        Console.WriteLine(" Performance-first Windows screenshot utility — P3 async pipeline");
         WriteRule();
         WritePair("Listener", "ACTIVE");
+        WritePair("Pipeline", FormatPipeline(pipeline));
+        WritePair("Benchmark", benchmarkInProgress ? "RUNNING" : "IDLE");
         WritePair("Full capture", "Ctrl + Shift + G");
         WritePair("Exit", "Ctrl + Shift + Q");
         WritePair("Format", "PNG (lossless)");
@@ -34,19 +39,20 @@ internal sealed class ConsoleUi
         {
             WritePair(
                 "Last capture",
+                $"dispatch {lastCapture.Metrics.DispatchMilliseconds:0.0} ms | " +
                 $"pixels {lastCapture.Metrics.PixelAcquisitionMilliseconds:0.0} ms | " +
                 $"PNG {lastCapture.Metrics.PngPersistenceMilliseconds:0.0} ms | " +
                 $"total {lastCapture.Metrics.TotalMilliseconds:0.0} ms");
         }
 
         WriteRule();
-        Console.WriteLine(" [1] Capture full desktop now");
+        Console.WriteLine(" [1] Queue full desktop capture");
         Console.WriteLine(" [2] Change save folder");
         Console.WriteLine(" [3] Open save folder");
         Console.WriteLine(" [4] Toggle clipboard copy");
         Console.WriteLine(" [5] Toggle capture sound");
         Console.WriteLine(" [6] Toggle capture diagnostics");
-        Console.WriteLine(" [7] Run baseline benchmark (1 warm-up + 10 captures)");
+        Console.WriteLine(" [7] Run baseline benchmark (non-blocking UI)");
         Console.WriteLine(" [0] Exit");
         WriteRule();
         Console.WriteLine($" Status: {statusMessage}");
@@ -73,9 +79,21 @@ internal sealed class ConsoleUi
         Console.WriteLine($" {label,-14}: {value}");
     }
 
+    private static string FormatPipeline(CapturePipelineSnapshot pipeline)
+    {
+        var state = pipeline.State.ToString().ToUpperInvariant();
+
+        if (pipeline.HasPendingRequest)
+        {
+            return $"{state} + 1 PENDING";
+        }
+
+        return state;
+    }
+
     private static void WriteRule(string? title = null)
     {
-        const int width = 86;
+        const int width = 96;
 
         if (string.IsNullOrWhiteSpace(title))
         {

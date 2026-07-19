@@ -1,4 +1,5 @@
-# SCapturer Performance Baseline
+
+# SCapturer Performance Baseline and P3 Pipeline
 
 ## Purpose
 
@@ -76,6 +77,31 @@ The benchmark is intentionally end-to-end and captures the visible desktop repea
 
 Use the same desktop content, save location, release configuration, and machine state when comparing later milestones.
 
-## P3 comparison rule
+## P3 asynchronous execution
 
-P3 must preserve this report schema or provide an explicit migration. The asynchronous pipeline is accepted only after comparing the same benchmark profile before and after the change and verifying that responsiveness improves without regressing capture correctness or resource stability.
+P3 preserves the P2 `CaptureService` and benchmark report schema. The measured stages therefore remain directly comparable with the previous milestone.
+
+Normal screenshots now run on one dedicated STA worker. Dispatch latency includes time spent waiting behind an active capture when a request occupies the single pending slot. This is intentional: it exposes user-visible queue delay rather than hiding it.
+
+The coordinator allows at most:
+
+```text
+one active capture + one coalesced pending capture
+```
+
+Repeated requests replace only the pending request. They never start parallel PNG encoders and never create an unbounded task backlog.
+
+The baseline benchmark still calls the measured capture service directly with clipboard and sound disabled. It runs outside the console loop in P3, but user captures are excluded while the benchmark is active so the samples are not contaminated by concurrent capture work.
+
+## P3 acceptance checks
+
+Compare a P2 report and a P3 report under the same desktop content and save volume. P3 is acceptable when:
+
+- median and p95 capture-service duration remain within normal run-to-run variance;
+- hotkey message processing remains responsive during PNG persistence;
+- console menu input remains responsive during normal captures;
+- rapid hotkey presses produce no more than one active and one pending capture;
+- memory does not grow with the number of rejected or coalesced requests;
+- shutdown finishes an active file operation without producing a partial final screenshot.
+
+P4 will extend this document with overlay latency and cached-frame selection measurements.
