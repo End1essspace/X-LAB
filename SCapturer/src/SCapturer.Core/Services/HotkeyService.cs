@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
@@ -13,7 +14,7 @@ public sealed class HotkeyService : IDisposable
     private Exception? _startupException;
     private bool _disposed;
 
-    public event Action? FullCaptureRequested;
+    public event Action<long>? FullCaptureRequested;
 
     public event Action? ExitRequested;
 
@@ -57,7 +58,7 @@ public sealed class HotkeyService : IDisposable
                     _startupException = error;
                     _startupCompleted.Set();
                 },
-                onFullCapture: () => FullCaptureRequested?.Invoke(),
+                onFullCapture: () => FullCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
                 onExit: () => ExitRequested?.Invoke());
 
             Application.Run(_window);

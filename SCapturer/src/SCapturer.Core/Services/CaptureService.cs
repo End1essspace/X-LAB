@@ -1,16 +1,29 @@
+using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Models;
 
 namespace SCapturer.Core.Services;
 
 public sealed class CaptureService
 {
-    public CaptureResult CaptureFullDesktop(AppSettings settings)
+    public CaptureResult CaptureFullDesktop(
+        AppSettings settings,
+        long requestTimestamp = 0,
+        string trigger = "Console")
     {
         ArgumentNullException.ThrowIfNull(settings);
+
+        var startedAtUtc = DateTimeOffset.UtcNow;
+        var workingSetBefore = Environment.WorkingSet;
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        var operationStarted = Stopwatch.GetTimestamp();
+        var dispatchMilliseconds = requestTimestamp > 0
+            ? ElapsedMilliseconds(requestTimestamp, operationStarted)
+            : 0;
 
         var bounds = SystemInformation.VirtualScreen;
         if (bounds.Width <= 0 || bounds.Height <= 0)
@@ -18,10 +31,16 @@ public sealed class CaptureService
             throw new InvalidOperationException("Windows reported an invalid virtual desktop size.");
         }
 
+        var stageStarted = Stopwatch.GetTimestamp();
         Directory.CreateDirectory(settings.FullCaptureFolder);
         var filePath = CreateUniqueFilePath(settings.FullCaptureFolder, "Screenshot");
+        var directoryPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
 
+        stageStarted = Stopwatch.GetTimestamp();
         using var bitmap = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppPArgb);
+        var bitmapAllocationMilliseconds = ElapsedMilliseconds(stageStarted);
+
+        stageStarted = Stopwatch.GetTimestamp();
         using (var graphics = Graphics.FromImage(bitmap))
         {
             graphics.CopyFromScreen(
@@ -33,20 +52,54 @@ public sealed class CaptureService
                 copyPixelOperation: CopyPixelOperation.SourceCopy);
         }
 
-        bitmap.Save(filePath, ImageFormat.Png);
+        var pixelAcquisitionMilliseconds = ElapsedMilliseconds(stageStarted);
 
+        stageStarted = Stopwatch.GetTimestamp();
+        bitmap.Save(filePath, ImageFormat.Png);
+        var fileInfo = new FileInfo(filePath);
+        var pngPersistenceMilliseconds = ElapsedMilliseconds(stageStarted);
+
+        var clipboardMilliseconds = 0d;
         if (settings.CopyToClipboard)
         {
+            stageStarted = Stopwatch.GetTimestamp();
             SetClipboardImageWithRetry(bitmap);
+            clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
         }
 
+        var soundMilliseconds = 0d;
         if (settings.PlayCaptureSound)
         {
+            stageStarted = Stopwatch.GetTimestamp();
             System.Media.SystemSounds.Asterisk.Play();
+            soundMilliseconds = ElapsedMilliseconds(stageStarted);
         }
 
-        var fileInfo = new FileInfo(filePath);
-        return new CaptureResult(filePath, bounds.Width, bounds.Height, fileInfo.Length);
+        var operationFinished = Stopwatch.GetTimestamp();
+        var allocatedAfter = GC.GetAllocatedBytesForCurrentThread();
+        var workingSetAfter = Environment.WorkingSet;
+
+        var metrics = new CaptureMetrics(
+            StartedAtUtc: startedAtUtc,
+            Trigger: trigger,
+            DispatchMilliseconds: dispatchMilliseconds,
+            DirectoryPreparationMilliseconds: directoryPreparationMilliseconds,
+            BitmapAllocationMilliseconds: bitmapAllocationMilliseconds,
+            PixelAcquisitionMilliseconds: pixelAcquisitionMilliseconds,
+            PngPersistenceMilliseconds: pngPersistenceMilliseconds,
+            ClipboardMilliseconds: clipboardMilliseconds,
+            SoundMilliseconds: soundMilliseconds,
+            TotalMilliseconds: ElapsedMilliseconds(operationStarted, operationFinished),
+            ManagedAllocatedBytes: Math.Max(0, allocatedAfter - allocatedBefore),
+            WorkingSetBeforeBytes: workingSetBefore,
+            WorkingSetAfterBytes: workingSetAfter);
+
+        return new CaptureResult(
+            filePath,
+            bounds.Width,
+            bounds.Height,
+            fileInfo.Length,
+            metrics);
     }
 
     private static string CreateUniqueFilePath(string directory, string prefix)
@@ -79,5 +132,15 @@ public sealed class CaptureService
                 Thread.Sleep(50 * attempt);
             }
         }
+    }
+
+    private static double ElapsedMilliseconds(long startedTimestamp)
+    {
+        return ElapsedMilliseconds(startedTimestamp, Stopwatch.GetTimestamp());
+    }
+
+    private static double ElapsedMilliseconds(long startedTimestamp, long finishedTimestamp)
+    {
+        return Stopwatch.GetElapsedTime(startedTimestamp, finishedTimestamp).TotalMilliseconds;
     }
 }

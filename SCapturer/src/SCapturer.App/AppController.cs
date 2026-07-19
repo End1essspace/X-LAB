@@ -1,5 +1,7 @@
 using System.Diagnostics;
 using SCapturer.App.UI;
+using SCapturer.Core.Benchmarking;
+using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Models;
 using SCapturer.Core.Services;
 
@@ -9,10 +11,13 @@ internal sealed class AppController
 {
     private readonly SettingsStore _settingsStore;
     private readonly CaptureService _captureService;
+    private readonly CaptureDiagnosticsStore _diagnosticsStore;
+    private readonly BaselineBenchmarkService _benchmarkService;
     private readonly ConsoleUi _consoleUi;
     private readonly CancellationTokenSource _shutdown = new();
 
     private AppSettings _settings;
+    private CaptureResult? _lastCapture;
     private string _statusMessage = "Ready.";
     private int _captureInProgress;
     private int _renderRequested = 1;
@@ -20,10 +25,14 @@ internal sealed class AppController
     public AppController(
         SettingsStore settingsStore,
         CaptureService captureService,
+        CaptureDiagnosticsStore diagnosticsStore,
+        BaselineBenchmarkService benchmarkService,
         ConsoleUi consoleUi)
     {
         _settingsStore = settingsStore;
         _captureService = captureService;
+        _diagnosticsStore = diagnosticsStore;
+        _benchmarkService = benchmarkService;
         _consoleUi = consoleUi;
         _settings = _settingsStore.Load();
     }
@@ -42,7 +51,7 @@ internal sealed class AppController
         {
             if (Interlocked.Exchange(ref _renderRequested, 0) == 1)
             {
-                _consoleUi.RenderMainMenu(_settings, _statusMessage);
+                RenderMainMenu();
             }
 
             if (Console.KeyAvailable)
@@ -62,7 +71,7 @@ internal sealed class AppController
         switch (key)
         {
             case '1':
-                CaptureFullDesktop();
+                CaptureFullDesktop(Stopwatch.GetTimestamp(), "Console");
                 break;
             case '2':
                 ChangeCaptureFolder();
@@ -78,6 +87,13 @@ internal sealed class AppController
                 _settings.PlayCaptureSound = !_settings.PlayCaptureSound;
                 SaveSettings($"Capture sound {EnabledText(_settings.PlayCaptureSound)}.");
                 break;
+            case '6':
+                _settings.EnableDiagnostics = !_settings.EnableDiagnostics;
+                SaveSettings($"Capture diagnostics {EnabledText(_settings.EnableDiagnostics)}.");
+                break;
+            case '7':
+                RunBaselineBenchmark();
+                break;
             case '0':
                 _shutdown.Cancel();
                 break;
@@ -88,29 +104,83 @@ internal sealed class AppController
         }
     }
 
-    private void CaptureFromHotkey()
+    private void CaptureFromHotkey(long requestTimestamp)
     {
-        CaptureFullDesktop();
+        CaptureFullDesktop(requestTimestamp, "Hotkey");
     }
 
-    private void CaptureFullDesktop()
+    private void CaptureFullDesktop(long requestTimestamp, string trigger)
     {
         if (Interlocked.Exchange(ref _captureInProgress, 1) == 1)
         {
-            _statusMessage = "A capture is already in progress.";
+            _statusMessage = "A capture or benchmark is already in progress.";
             RequestRender();
             return;
         }
 
         try
         {
-            var result = _captureService.CaptureFullDesktop(_settings);
+            var result = _captureService.CaptureFullDesktop(
+                _settings,
+                requestTimestamp,
+                trigger);
+
+            _lastCapture = result;
+
+            var diagnosticsWarning = string.Empty;
+            if (_settings.EnableDiagnostics)
+            {
+                try
+                {
+                    _diagnosticsStore.Record(result);
+                }
+                catch (Exception exception)
+                {
+                    diagnosticsWarning = $" Diagnostics log failed: {exception.Message}";
+                }
+            }
+
             _statusMessage =
-                $"Saved {result.Width}×{result.Height} PNG ({FormatBytes(result.FileSizeBytes)}): {result.FilePath}";
+                $"Saved {result.Width}×{result.Height} PNG ({FormatBytes(result.FileSizeBytes)}) " +
+                $"in {result.Metrics.TotalMilliseconds:0.0} ms: {result.FilePath}." +
+                diagnosticsWarning;
         }
         catch (Exception exception)
         {
             _statusMessage = $"Capture failed: {exception.Message}";
+        }
+        finally
+        {
+            Volatile.Write(ref _captureInProgress, 0);
+            RequestRender();
+        }
+    }
+
+    private void RunBaselineBenchmark()
+    {
+        if (Interlocked.Exchange(ref _captureInProgress, 1) == 1)
+        {
+            _statusMessage = "A capture or benchmark is already in progress.";
+            RequestRender();
+            return;
+        }
+
+        try
+        {
+            _statusMessage = "Starting baseline benchmark: 1 warm-up + 10 measured captures.";
+            RenderMainMenu();
+
+            var result = _benchmarkService.Run(
+                _settings,
+                measuredIterations: 10);
+
+            _statusMessage =
+                $"Benchmark complete. Median {result.Summary.MedianTotalMilliseconds:0.0} ms; " +
+                $"p95 {result.Summary.P95TotalMilliseconds:0.0} ms. Report: {result.ReportFilePath}";
+        }
+        catch (Exception exception)
+        {
+            _statusMessage = $"Benchmark failed: {exception.Message}";
         }
         finally
         {
@@ -184,6 +254,11 @@ internal sealed class AppController
         }
 
         RequestRender();
+    }
+
+    private void RenderMainMenu()
+    {
+        _consoleUi.RenderMainMenu(_settings, _statusMessage, _lastCapture);
     }
 
     private void RequestRender()

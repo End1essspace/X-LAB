@@ -12,11 +12,14 @@ internal sealed class ConsoleUi
         _paths = paths;
     }
 
-    public void RenderMainMenu(AppSettings settings, string statusMessage)
+    public void RenderMainMenu(
+        AppSettings settings,
+        string statusMessage,
+        CaptureResult? lastCapture)
     {
         Console.Clear();
         WriteRule("SCAPTURER");
-        Console.WriteLine(" Performance-first Windows screenshot utility");
+        Console.WriteLine(" Performance-first Windows screenshot utility — P2 baseline metrics");
         WriteRule();
         WritePair("Listener", "ACTIVE");
         WritePair("Full capture", "Ctrl + Shift + G");
@@ -24,17 +27,32 @@ internal sealed class ConsoleUi
         WritePair("Format", "PNG (lossless)");
         WritePair("Clipboard", OnOff(settings.CopyToClipboard));
         WritePair("Sound", OnOff(settings.PlayCaptureSound));
+        WritePair("Diagnostics", OnOff(settings.EnableDiagnostics));
         WritePair("Save folder", settings.FullCaptureFolder);
+
+        if (lastCapture is not null)
+        {
+            WritePair(
+                "Last capture",
+                $"pixels {lastCapture.Metrics.PixelAcquisitionMilliseconds:0.0} ms | " +
+                $"PNG {lastCapture.Metrics.PngPersistenceMilliseconds:0.0} ms | " +
+                $"total {lastCapture.Metrics.TotalMilliseconds:0.0} ms");
+        }
+
         WriteRule();
         Console.WriteLine(" [1] Capture full desktop now");
         Console.WriteLine(" [2] Change save folder");
         Console.WriteLine(" [3] Open save folder");
         Console.WriteLine(" [4] Toggle clipboard copy");
         Console.WriteLine(" [5] Toggle capture sound");
+        Console.WriteLine(" [6] Toggle capture diagnostics");
+        Console.WriteLine(" [7] Run baseline benchmark (1 warm-up + 10 captures)");
         Console.WriteLine(" [0] Exit");
         WriteRule();
         Console.WriteLine($" Status: {statusMessage}");
         Console.WriteLine($" Config: {_paths.SettingsFile}");
+        Console.WriteLine($" Metrics: {_paths.CaptureMetricsFile}");
+        Console.WriteLine($" Benchmarks: {_paths.BenchmarkReportsDirectory}");
         WriteRule();
         Console.Write(" Select an option: ");
     }
@@ -57,7 +75,7 @@ internal sealed class ConsoleUi
 
     private static void WriteRule(string? title = null)
     {
-        const int width = 78;
+        const int width = 86;
 
         if (string.IsNullOrWhiteSpace(title))
         {

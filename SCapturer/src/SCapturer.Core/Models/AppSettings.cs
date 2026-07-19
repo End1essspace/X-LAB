@@ -8,6 +8,8 @@ public sealed class AppSettings
 
     public bool PlayCaptureSound { get; set; } = true;
 
+    public bool EnableDiagnostics { get; set; }
+
     public static AppSettings CreateDefault() => new();
 
     private static string CreateDefaultCaptureFolder()

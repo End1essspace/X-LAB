@@ -13,6 +13,7 @@ Owns application concerns:
 - console lifecycle and rendering;
 - command dispatch;
 - application-level status messages;
+- benchmark progress presentation;
 - composition of core services.
 
 ### `SCapturer.Core`
@@ -23,10 +24,13 @@ Owns reusable Windows screenshot functionality:
 - PNG persistence;
 - clipboard integration;
 - global hotkey registration;
+- capture-stage instrumentation;
+- diagnostics persistence;
+- baseline benchmark execution and reports;
 - settings models and storage;
 - application data paths.
 
-`SCapturer.Core` currently references Windows Forms because the baseline capture and clipboard implementations use Windows desktop APIs. Later performance work may replace parts of this implementation behind explicit interfaces without changing the application shell.
+`SCapturer.Core` currently references Windows Forms because the baseline capture and clipboard implementations use Windows desktop APIs. Later performance work may replace these implementations behind explicit interfaces without changing the application shell.
 
 ## Product identity
 
@@ -34,19 +38,29 @@ Owns reusable Windows screenshot functionality:
 - application namespace: `SCapturer.App`;
 - core namespace: `SCapturer.Core`;
 - mutex: `Local\SCapturer.App`;
-- current settings: `%LOCALAPPDATA%\SCapturer\config.json`;
+- settings: `%LOCALAPPDATA%\SCapturer\config.json`;
+- diagnostics: `%LOCALAPPDATA%\SCapturer\diagnostics`;
 - default captures: `%USERPROFILE%\Pictures\SCapturer\Full`.
 
-## Legacy settings migration
+## P2 diagnostics boundary
 
-On first launch after the rename, the settings store checks the previous path:
+`CaptureService` owns measurement of the synchronous capture stages and returns immutable `CaptureMetrics` with every successful `CaptureResult`.
 
-```text
-%LOCALAPPDATA%\X-LAB\ScreenCaptureTool\config.json
-```
+`CaptureDiagnosticsStore` is separate from `CaptureService`. This keeps optional JSONL persistence outside the measured operation and prevents diagnostics policy from becoming part of the capture backend.
 
-When that file contains valid settings, SCapturer writes an equivalent configuration to the new path. The legacy file is retained so migration is non-destructive.
+`BaselineBenchmarkService` invokes the same public capture path used by normal screenshots. It changes only the benchmark settings profile by disabling clipboard and sound and redirecting output to a temporary directory on the selected capture volume.
+
+## Threading status
+
+The capture path remains synchronous in P2. A hotkey capture currently executes on the hotkey message-loop thread, while a console capture executes on the console thread. P3 will replace this behavior with a bounded capture coordinator and a dedicated worker so UI and Win32 message processing are never blocked by PNG encoding or disk I/O.
 
 ## Next architectural change
 
-P2 introduces capture-stage metrics and a benchmark harness before the capture path becomes asynchronous. This preserves a trustworthy baseline for measuring later performance improvements.
+P3 introduces:
+
+- a bounded capture-request channel;
+- one dedicated capture worker;
+- one active request plus one coalesced pending request;
+- cancellation-aware shutdown;
+- non-blocking hotkey and console dispatch;
+- explicit capture state transitions.
