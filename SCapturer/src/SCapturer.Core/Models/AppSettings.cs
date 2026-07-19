@@ -2,7 +2,9 @@ namespace SCapturer.Core.Models;
 
 public sealed class AppSettings
 {
-    public string FullCaptureFolder { get; set; } = CreateDefaultCaptureFolder();
+    public string FullCaptureFolder { get; set; } = CreateDefaultCaptureFolder("Full");
+
+    public string SnipCaptureFolder { get; set; } = CreateDefaultCaptureFolder("Snips");
 
     public bool CopyToClipboard { get; set; } = true;
 
@@ -17,13 +19,14 @@ public sealed class AppSettings
         return new AppSettings
         {
             FullCaptureFolder = FullCaptureFolder,
+            SnipCaptureFolder = SnipCaptureFolder,
             CopyToClipboard = CopyToClipboard,
             PlayCaptureSound = PlayCaptureSound,
             EnableDiagnostics = EnableDiagnostics,
         };
     }
 
-    private static string CreateDefaultCaptureFolder()
+    private static string CreateDefaultCaptureFolder(string captureType)
     {
         var pictures = Environment.GetFolderPath(Environment.SpecialFolder.MyPictures);
         if (string.IsNullOrWhiteSpace(pictures))
@@ -31,6 +34,6 @@ public sealed class AppSettings
             pictures = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
         }
 
-        return Path.Combine(pictures, "SCapturer", "Full");
+        return Path.Combine(pictures, "SCapturer", captureType);
     }
 }

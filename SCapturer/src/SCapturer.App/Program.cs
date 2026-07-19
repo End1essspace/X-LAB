@@ -5,6 +5,7 @@ using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
+using SCapturer.Core.Snipping;
 
 namespace SCapturer.App;
 
@@ -39,9 +40,12 @@ internal static class Program
             var paths = new AppPaths();
             var settingsStore = new SettingsStore(paths);
             var captureService = new CaptureService();
+            var snippingService = new SnippingService();
             var diagnosticsStore = new CaptureDiagnosticsStore(paths);
             var benchmarkService = new BaselineBenchmarkService(captureService, paths);
-            using var captureCoordinator = new CaptureCoordinator(captureService);
+            using var captureCoordinator = new CaptureCoordinator(
+                captureService,
+                snippingService);
             var consoleUi = new ConsoleUi(paths);
             var app = new AppController(
                 settingsStore,

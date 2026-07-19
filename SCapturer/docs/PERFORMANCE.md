@@ -1,107 +1,112 @@
+# SCapturer Performance Baseline and P4 Snipping
 
-# SCapturer Performance Baseline and P3 Pipeline
+## Full capture
 
-## Purpose
+The full-capture backend and P2 benchmark remain based on:
 
-P2 establishes a measurable baseline before the capture path becomes asynchronous or receives a native backend. The current implementation remains based on `System.Drawing.Bitmap`, `Graphics.CopyFromScreen`, and the built-in PNG encoder.
+- `System.Drawing.Bitmap`;
+- `Graphics.CopyFromScreen`;
+- the built-in PNG encoder.
 
-## Capture stages
+Existing measurements remain:
 
-SCapturer records the following stages for every successful full-desktop capture:
+- dispatch;
+- directory preparation;
+- bitmap allocation;
+- pixel acquisition;
+- PNG persistence;
+- clipboard;
+- sound;
+- total duration.
 
-1. **Dispatch** — elapsed time between the caller recording the request and `CaptureService` beginning the operation.
-2. **Directory preparation** — destination-directory creation and collision-safe file-name selection.
-3. **Bitmap allocation** — allocation of the 32-bit capture bitmap.
-4. **Pixel acquisition** — `Graphics.FromImage` and `Graphics.CopyFromScreen` for the entire virtual desktop.
-5. **PNG persistence** — PNG encoding, file writing, and final file metadata lookup.
-6. **Clipboard** — clipboard image publication including retry delays when the clipboard is busy.
-7. **Sound** — system sound dispatch.
-8. **Total** — capture-service duration from operation start through optional clipboard and sound work.
+## Region capture
 
-Managed allocations are measured with `GC.GetAllocatedBytesForCurrentThread`. Working-set values use `Environment.WorkingSet` before and after the measured operation. These values are diagnostic signals, not exact ownership accounting for native GDI memory.
+P4 adds a separate `SnipCaptureMetrics` block with three measurements:
 
-## Diagnostics mode
+- **overlay preparation** — dimmed-frame and overlay construction;
+- **interaction** — time from overlay presentation to user confirmation;
+- **crop** — creation of the selected bitmap from the cached frame.
 
-When diagnostics are enabled, one compact JSON object is appended per successful user capture to:
+The common `CaptureMetrics` shape remains unchanged, preserving the P2/P3 full-capture benchmark report schema.
 
-```text
-%LOCALAPPDATA%\SCapturer\diagnostics\capture-metrics.jsonl
-```
+`TotalMilliseconds` includes interaction time. Use the individual fields rather than total duration when comparing capture or encoder performance.
 
-Writing the diagnostics entry happens after the measured capture has completed, so log persistence is not included in `TotalMilliseconds`.
+## Cached-frame rule
 
-## Baseline benchmark
+A region capture performs exactly one physical desktop acquisition before the overlay appears.
 
-The console benchmark performs:
+During selection:
 
-- one unreported warm-up capture;
-- ten measured captures;
-- clipboard disabled;
-- sound disabled;
-- PNG persistence enabled;
-- temporary screenshot cleanup after each sample.
+- no additional `CopyFromScreen` call occurs;
+- no desktop bitmap is reallocated;
+- the dimmed frame is not regenerated;
+- no timer polls the mouse;
+- dirty-region repainting follows mouse events.
 
-The temporary directory is created under the active capture folder so the benchmark exercises the same target volume as normal screenshots:
+The saved region is cropped from the original cached frame, so overlay visuals cannot enter the PNG.
 
-```text
-<FullCaptureFolder>\.scapturer-benchmark
-```
+## Memory bound
 
-The directory is removed when cleanup succeeds. The JSON report is retained under:
-
-```text
-%LOCALAPPDATA%\SCapturer\diagnostics\benchmarks
-```
-
-The report includes individual samples plus:
-
-- median total duration;
-- p95 total duration using nearest-rank selection;
-- fastest and slowest total duration;
-- median pixel-acquisition duration;
-- median PNG-persistence duration;
-- average managed allocations;
-- average PNG file size;
-- operating system, runtime, architecture, processor count, and virtual-desktop dimensions.
-
-## Interpretation
-
-The benchmark is intentionally end-to-end and captures the visible desktop repeatedly. Results change with:
-
-- desktop content complexity, because PNG compression cost varies;
-- display resolution and monitor count;
-- target drive and filesystem state;
-- antivirus scanning;
-- background CPU and disk activity;
-- Remote Desktop and display-driver state.
-
-Use the same desktop content, save location, release configuration, and machine state when comparing later milestones.
-
-## P3 asynchronous execution
-
-P3 preserves the P2 `CaptureService` and benchmark report schema. The measured stages therefore remain directly comparable with the previous milestone.
-
-Normal screenshots now run on one dedicated STA worker. Dispatch latency includes time spent waiting behind an active capture when a request occupies the single pending slot. This is intentional: it exposes user-visible queue delay rather than hiding it.
-
-The coordinator allows at most:
+While the overlay is active, P4 holds two 32-bit virtual-desktop images:
 
 ```text
-one active capture + one coalesced pending capture
+virtual width × virtual height × 4 × 2 bytes
 ```
 
-Repeated requests replace only the pending request. They never start parallel PNG encoders and never create an unbounded task backlog.
+After confirmation, one selected-region bitmap exists temporarily. All images are disposed before the worker accepts another request.
 
-The baseline benchmark still calls the measured capture service directly with clipboard and sound disabled. It runs outside the console loop in P3, but user captures are excluded while the benchmark is active so the samples are not contaminated by concurrent capture work.
+The shared coordinator still permits only one active request and one pending request, preventing multiple overlay frame sets from existing concurrently.
 
-## P3 acceptance checks
+## Hotkey pressure
 
-Compare a P2 report and a P3 report under the same desktop content and save volume. P3 is acceptable when:
+Global hotkeys use `MOD_NOREPEAT`. Holding `Ctrl+Shift+G` or `Ctrl+Shift+S` therefore does not generate a continuous stream of requests.
 
-- median and p95 capture-service duration remain within normal run-to-run variance;
-- hotkey message processing remains responsive during PNG persistence;
-- console menu input remains responsive during normal captures;
-- rapid hotkey presses produce no more than one active and one pending capture;
-- memory does not grow with the number of rejected or coalesced requests;
-- shutdown finishes an active file operation without producing a partial final screenshot.
+Rapid distinct presses are still bounded by the coalesced pending slot.
 
-P4 will extend this document with overlay latency and cached-frame selection measurements.
+## P4 acceptance checks
+
+### Functional
+
+- `Ctrl+Shift+S` opens one overlay over the virtual desktop.
+- Left drag saves exactly one PNG.
+- `Esc` and right-click create no file.
+- Saved pixels contain no dimming, border, or size label.
+- Clipboard content matches the saved crop.
+- Full and region folders are independent.
+- Full capture behavior remains unchanged.
+
+### Responsiveness
+
+- Overlay rendering does not run on the hotkey or console thread.
+- Mouse movement does not recapture the desktop.
+- No parallel overlays can open.
+- At most one later request remains pending.
+
+### Diagnostics
+
+A successful region entry records:
+
+- capture kind;
+- absolute virtual-screen rectangle;
+- desktop acquisition;
+- overlay preparation;
+- interaction;
+- crop;
+- PNG persistence;
+- total duration.
+
+### Resource behavior
+
+After repeated captures and cancellations:
+
+- overlay forms are disposed;
+- original, dimmed, and crop bitmaps are disposed;
+- GDI and USER handles do not grow linearly;
+- cancellation creates no PNG;
+- shutdown closes an active overlay without further input.
+
+## Benchmark scope
+
+The existing automated benchmark remains a full-desktop benchmark so P2, P3, and P4 results stay comparable. User-controlled selection time is not mixed into that benchmark.
+
+P5 can add deterministic geometry tests and overlay startup measurements without simulating human interaction.

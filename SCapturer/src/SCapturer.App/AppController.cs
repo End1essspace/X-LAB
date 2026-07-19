@@ -42,6 +42,7 @@ internal sealed class AppController
 
         _captureCoordinator.StateChanged += OnPipelineStateChanged;
         _captureCoordinator.CaptureCompleted += OnCaptureCompleted;
+        _captureCoordinator.CaptureCancelled += OnCaptureCancelled;
         _captureCoordinator.CaptureFailed += OnCaptureFailed;
     }
 
@@ -50,11 +51,14 @@ internal sealed class AppController
         _captureCoordinator.Start();
 
         using var hotkeys = new HotkeyService();
-        hotkeys.FullCaptureRequested += CaptureFromHotkey;
+        hotkeys.FullCaptureRequested += CaptureFullFromHotkey;
+        hotkeys.RegionCaptureRequested += CaptureRegionFromHotkey;
         hotkeys.ExitRequested += RequestExitFromHotkey;
         hotkeys.Start();
 
-        SetStatus("Listener active. Ctrl+Shift+G captures; Ctrl+Shift+Q exits.");
+        SetStatus(
+            "Listener active. Ctrl+Shift+G captures the desktop; " +
+            "Ctrl+Shift+S opens region selection; Ctrl+Shift+Q exits.");
 
         try
         {
@@ -68,7 +72,7 @@ internal sealed class AppController
                 if (Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(intercept: true);
-                    HandleMenuKey(key.KeyChar);
+                    HandleMenuKey(key);
                 }
 
                 Thread.Sleep(40);
@@ -84,43 +88,67 @@ internal sealed class AppController
         return 0;
     }
 
-    private void HandleMenuKey(char key)
+    private void HandleMenuKey(ConsoleKeyInfo key)
     {
-        switch (key)
+        switch (char.ToUpperInvariant(key.KeyChar))
         {
             case '1':
-                QueueFullDesktopCapture(Stopwatch.GetTimestamp(), "Console");
+                QueueCapture(
+                    CaptureKind.FullDesktop,
+                    Stopwatch.GetTimestamp(),
+                    "ConsoleFull");
                 break;
             case '2':
-                ChangeCaptureFolder();
+                QueueCapture(
+                    CaptureKind.Region,
+                    Stopwatch.GetTimestamp(),
+                    "ConsoleSnip");
                 break;
             case '3':
-                OpenCaptureFolder();
+                ChangeCaptureFolder(
+                    CaptureKind.FullDesktop,
+                    "CHANGE FULL CAPTURE FOLDER");
                 break;
             case '4':
-                SaveSettings(ToggleClipboardCopy());
+                ChangeCaptureFolder(
+                    CaptureKind.Region,
+                    "CHANGE SNIP CAPTURE FOLDER");
                 break;
             case '5':
-                SaveSettings(ToggleCaptureSound());
+                OpenCaptureFolder(CaptureKind.FullDesktop);
                 break;
             case '6':
-                SaveSettings(ToggleDiagnostics());
+                OpenCaptureFolder(CaptureKind.Region);
                 break;
             case '7':
+                SaveSettings(ToggleClipboardCopy());
+                break;
+            case '8':
+                SaveSettings(ToggleCaptureSound());
+                break;
+            case '9':
+                SaveSettings(ToggleDiagnostics());
+                break;
+            case 'B':
                 StartBaselineBenchmark();
                 break;
             case '0':
                 _shutdown.Cancel();
                 break;
             default:
-                SetStatus($"Unknown option: {key}");
+                SetStatus($"Unknown option: {key.KeyChar}");
                 break;
         }
     }
 
-    private void CaptureFromHotkey(long requestTimestamp)
+    private void CaptureFullFromHotkey(long requestTimestamp)
     {
-        QueueFullDesktopCapture(requestTimestamp, "Hotkey");
+        QueueCapture(CaptureKind.FullDesktop, requestTimestamp, "HotkeyFull");
+    }
+
+    private void CaptureRegionFromHotkey(long requestTimestamp)
+    {
+        QueueCapture(CaptureKind.Region, requestTimestamp, "HotkeySnip");
     }
 
     private string ToggleClipboardCopy()
@@ -150,7 +178,10 @@ internal sealed class AppController
         }
     }
 
-    private void QueueFullDesktopCapture(long requestTimestamp, string trigger)
+    private void QueueCapture(
+        CaptureKind kind,
+        long requestTimestamp,
+        string trigger)
     {
         if (Volatile.Read(ref _benchmarkInProgress) == 1)
         {
@@ -159,15 +190,20 @@ internal sealed class AppController
         }
 
         var result = _captureCoordinator.TryEnqueue(
+            kind,
             GetSettingsSnapshot(),
             requestTimestamp,
             trigger);
 
+        var captureName = kind == CaptureKind.Region
+            ? "Region capture"
+            : "Full capture";
+
         SetStatus(result switch
         {
-            CaptureEnqueueResult.Accepted => "Capture queued.",
+            CaptureEnqueueResult.Accepted => $"{captureName} queued.",
             CaptureEnqueueResult.Coalesced =>
-                "Capture worker busy; the single pending request was replaced with the latest request.",
+                $"{captureName} replaced the single pending request with the latest request.",
             CaptureEnqueueResult.Stopping => "Capture pipeline is stopping.",
             _ => "Capture request was not accepted.",
         });
@@ -189,7 +225,7 @@ internal sealed class AppController
         }
 
         var settingsSnapshot = GetSettingsSnapshot();
-        SetStatus("Starting baseline benchmark: 1 warm-up + 10 measured captures.");
+        SetStatus("Starting baseline benchmark: 1 warm-up + 10 measured full captures.");
 
         _benchmarkTask = Task.Run(() =>
         {
@@ -255,11 +291,15 @@ internal sealed class AppController
             }
         }
 
+        var captureName = completed.Kind == CaptureKind.Region
+            ? "region"
+            : "full desktop";
+
         lock (_uiStateGate)
         {
             _lastCapture = completed.Result;
             _statusMessage =
-                $"Saved {completed.Result.Width}×{completed.Result.Height} PNG " +
+                $"Saved {captureName} {completed.Result.Width}×{completed.Result.Height} PNG " +
                 $"({FormatBytes(completed.Result.FileSizeBytes)}) in " +
                 $"{completed.Result.Metrics.TotalMilliseconds:0.0} ms: " +
                 $"{completed.Result.FilePath}.{diagnosticsWarning}";
@@ -268,15 +308,31 @@ internal sealed class AppController
         RequestRender();
     }
 
-    private void OnCaptureFailed(CaptureFailedEvent failed)
+    private void OnCaptureCancelled(CaptureCancelledEvent cancelled)
     {
-        SetStatus($"Capture failed ({failed.Trigger}): {failed.Exception.Message}");
+        SetStatus(
+            cancelled.Kind == CaptureKind.Region
+                ? "Region capture cancelled."
+                : "Capture cancelled.");
     }
 
-    private void ChangeCaptureFolder()
+    private void OnCaptureFailed(CaptureFailedEvent failed)
     {
-        var enteredPath = _consoleUi.PromptForFolder(
-            GetSettingsSnapshot().FullCaptureFolder);
+        SetStatus(
+            $"Capture failed ({failed.Kind}, {failed.Trigger}): " +
+            failed.Exception.Message);
+    }
+
+    private void ChangeCaptureFolder(
+        CaptureKind kind,
+        string title)
+    {
+        var settings = GetSettingsSnapshot();
+        var currentFolder = kind == CaptureKind.Region
+            ? settings.SnipCaptureFolder
+            : settings.FullCaptureFolder;
+
+        var enteredPath = _consoleUi.PromptForFolder(title, currentFolder);
         if (string.IsNullOrWhiteSpace(enteredPath))
         {
             SetStatus("Folder change cancelled.");
@@ -285,15 +341,26 @@ internal sealed class AppController
 
         try
         {
-            var expanded = Environment.ExpandEnvironmentVariables(enteredPath.Trim().Trim('"'));
+            var expanded = Environment.ExpandEnvironmentVariables(
+                enteredPath.Trim().Trim('"'));
             var fullPath = Path.GetFullPath(expanded);
             Directory.CreateDirectory(fullPath);
+
             lock (_uiStateGate)
             {
-                _settings.FullCaptureFolder = fullPath;
+                if (kind == CaptureKind.Region)
+                {
+                    _settings.SnipCaptureFolder = fullPath;
+                }
+                else
+                {
+                    _settings.FullCaptureFolder = fullPath;
+                }
             }
 
-            SaveSettings($"Capture folder changed to: {fullPath}");
+            SaveSettings(
+                $"{(kind == CaptureKind.Region ? "Snip" : "Full capture")} " +
+                $"folder changed to: {fullPath}");
         }
         catch (Exception exception)
         {
@@ -301,11 +368,15 @@ internal sealed class AppController
         }
     }
 
-    private void OpenCaptureFolder()
+    private void OpenCaptureFolder(CaptureKind kind)
     {
         try
         {
-            var captureFolder = GetSettingsSnapshot().FullCaptureFolder;
+            var settings = GetSettingsSnapshot();
+            var captureFolder = kind == CaptureKind.Region
+                ? settings.SnipCaptureFolder
+                : settings.FullCaptureFolder;
+
             Directory.CreateDirectory(captureFolder);
             Process.Start(new ProcessStartInfo
             {
@@ -313,7 +384,10 @@ internal sealed class AppController
                 UseShellExecute = true,
             });
 
-            SetStatus("Capture folder opened.");
+            SetStatus(
+                kind == CaptureKind.Region
+                    ? "Snip folder opened."
+                    : "Full capture folder opened.");
         }
         catch (Exception exception)
         {

@@ -2,12 +2,14 @@ using System.Linq;
 using System.Threading.Channels;
 using SCapturer.Core.Models;
 using SCapturer.Core.Services;
+using SCapturer.Core.Snipping;
 
 namespace SCapturer.Core.Pipeline;
 
 public sealed class CaptureCoordinator : IDisposable
 {
     private readonly CaptureService _captureService;
+    private readonly SnippingService _snippingService;
     private readonly Channel<byte> _signals;
     private readonly ManualResetEventSlim _workerStarted = new(false);
     private readonly object _gate = new();
@@ -21,11 +23,15 @@ public sealed class CaptureCoordinator : IDisposable
     private bool _disposed;
     private long _nextRequestId;
     private long _snapshotVersion;
+    private CaptureKind? _activeKind;
     private string? _activeTrigger;
 
-    public CaptureCoordinator(CaptureService captureService)
+    public CaptureCoordinator(
+        CaptureService captureService,
+        SnippingService snippingService)
     {
         _captureService = captureService;
+        _snippingService = snippingService;
 
         _signals = Channel.CreateBounded<byte>(new BoundedChannelOptions(1)
         {
@@ -39,6 +45,8 @@ public sealed class CaptureCoordinator : IDisposable
     public event Action<CapturePipelineSnapshot>? StateChanged;
 
     public event Action<CaptureCompletedEvent>? CaptureCompleted;
+
+    public event Action<CaptureCancelledEvent>? CaptureCancelled;
 
     public event Action<CaptureFailedEvent>? CaptureFailed;
 
@@ -90,6 +98,7 @@ public sealed class CaptureCoordinator : IDisposable
     }
 
     public CaptureEnqueueResult TryEnqueue(
+        CaptureKind kind,
         AppSettings settings,
         long requestTimestamp,
         string trigger)
@@ -119,6 +128,7 @@ public sealed class CaptureCoordinator : IDisposable
 
             _pendingRequest = new CaptureRequest(
                 RequestId: Interlocked.Increment(ref _nextRequestId),
+                Kind: kind,
                 RequestTimestamp: requestTimestamp,
                 Trigger: trigger,
                 Settings: settings.CreateSnapshot());
@@ -126,10 +136,6 @@ public sealed class CaptureCoordinator : IDisposable
             snapshot = SetSnapshotLocked(
                 state: _active ? _snapshot.State : CapturePipelineState.Queued);
 
-            // The channel is a bounded wake-up signal. The actual pending slot
-            // lives under _gate so repeated requests replace only the one
-            // queued request. Signalling inside the lock prevents shutdown from
-            // completing the writer between storing and waking the request.
             _signals.Writer.TryWrite(0);
         }
 
@@ -154,10 +160,13 @@ public sealed class CaptureCoordinator : IDisposable
             if (_acceptingRequests)
             {
                 _acceptingRequests = false;
+                _pendingRequest = null;
                 stoppingSnapshot = SetSnapshotLocked(CapturePipelineState.Stopping);
                 _signals.Writer.TryComplete();
             }
         }
+
+        _snippingService.CancelActiveSelection();
 
         if (stoppingSnapshot is not null)
         {
@@ -209,6 +218,7 @@ public sealed class CaptureCoordinator : IDisposable
 
                         _pendingRequest = null;
                         _active = true;
+                        _activeKind = request.Kind;
                         _activeTrigger = request.Trigger;
                         startedSnapshot = SetSnapshotLocked(CapturePipelineState.Capturing);
                     }
@@ -217,50 +227,37 @@ public sealed class CaptureCoordinator : IDisposable
 
                     try
                     {
-                        var result = _captureService.CaptureFullDesktop(
-                            request.Settings,
-                            request.RequestTimestamp,
-                            request.Trigger,
-                            stage => UpdateStage(stage));
+                        var result = ExecuteRequest(request);
+
+                        if (result is null)
+                        {
+                            PublishCancelled(new CaptureCancelledEvent(
+                                request.RequestId,
+                                request.Kind,
+                                request.Trigger));
+
+                            FinishRequest(CapturePipelineState.Cancelled);
+                            continue;
+                        }
 
                         PublishCompleted(new CaptureCompletedEvent(
                             request.RequestId,
+                            request.Kind,
                             request.Trigger,
                             request.Settings,
                             result));
 
-                        CapturePipelineSnapshot finishedSnapshot;
-                        lock (_gate)
-                        {
-                            _active = false;
-                            _activeTrigger = null;
-                            finishedSnapshot = SetSnapshotLocked(
-                                _pendingRequest is null
-                                    ? CapturePipelineState.Completed
-                                    : CapturePipelineState.Queued);
-                        }
-
-                        PublishState(finishedSnapshot);
+                        FinishRequest(CapturePipelineState.Completed);
                     }
                     catch (Exception exception)
                     {
                         PublishFailed(new CaptureFailedEvent(
                             request.RequestId,
+                            request.Kind,
                             request.Trigger,
                             exception));
 
-                        CapturePipelineSnapshot failedSnapshot;
-                        lock (_gate)
-                        {
-                            _active = false;
-                            _activeTrigger = null;
-                            failedSnapshot = SetSnapshotLocked(
-                                _pendingRequest is null
-                                    ? CapturePipelineState.Failed
-                                    : CapturePipelineState.Queued);
-                        }
-
-                        PublishState(failedSnapshot);
+                        FinishRequest(CapturePipelineState.Failed);
                     }
                 }
             }
@@ -275,6 +272,7 @@ public sealed class CaptureCoordinator : IDisposable
             {
                 _acceptingRequests = false;
                 _active = false;
+                _activeKind = null;
                 _activeTrigger = null;
                 failedSnapshot = SetSnapshotLocked(CapturePipelineState.Failed);
             }
@@ -282,6 +280,7 @@ public sealed class CaptureCoordinator : IDisposable
             PublishState(failedSnapshot);
             PublishFailed(new CaptureFailedEvent(
                 RequestId: 0,
+                Kind: CaptureKind.FullDesktop,
                 Trigger: "CaptureWorker",
                 Exception: exception));
         }
@@ -292,6 +291,7 @@ public sealed class CaptureCoordinator : IDisposable
             {
                 _acceptingRequests = false;
                 _active = false;
+                _activeKind = null;
                 _activeTrigger = null;
                 _pendingRequest = null;
                 stoppedSnapshot = SetSnapshotLocked(CapturePipelineState.Stopped);
@@ -301,6 +301,47 @@ public sealed class CaptureCoordinator : IDisposable
         }
     }
 
+    private CaptureResult? ExecuteRequest(CaptureRequest request)
+    {
+        return request.Kind switch
+        {
+            CaptureKind.FullDesktop => _captureService.CaptureFullDesktop(
+                request.Settings,
+                request.RequestTimestamp,
+                request.Trigger,
+                UpdateStage),
+
+            CaptureKind.Region => _snippingService.CaptureRegion(
+                request.Settings,
+                request.RequestTimestamp,
+                request.Trigger,
+                UpdateStage),
+
+            _ => throw new ArgumentOutOfRangeException(
+                nameof(request.Kind),
+                request.Kind,
+                "Unsupported capture kind."),
+        };
+    }
+
+    private void FinishRequest(CapturePipelineState finalState)
+    {
+        CapturePipelineSnapshot finishedSnapshot;
+
+        lock (_gate)
+        {
+            _active = false;
+            _activeKind = null;
+            _activeTrigger = null;
+            finishedSnapshot = SetSnapshotLocked(
+                _pendingRequest is null
+                    ? finalState
+                    : CapturePipelineState.Queued);
+        }
+
+        PublishState(finishedSnapshot);
+    }
+
     private void UpdateStage(CapturePipelineStage stage)
     {
         var state = stage switch
@@ -308,10 +349,14 @@ public sealed class CaptureCoordinator : IDisposable
             CapturePipelineStage.DirectoryPreparation => CapturePipelineState.Capturing,
             CapturePipelineStage.BitmapAllocation => CapturePipelineState.Capturing,
             CapturePipelineStage.PixelAcquisition => CapturePipelineState.Capturing,
+            CapturePipelineStage.OverlayPreparation => CapturePipelineState.PreparingOverlay,
+            CapturePipelineStage.RegionSelection => CapturePipelineState.Selecting,
+            CapturePipelineStage.RegionCropping => CapturePipelineState.Cropping,
             CapturePipelineStage.PngPersistence => CapturePipelineState.Saving,
             CapturePipelineStage.ClipboardPublication => CapturePipelineState.Publishing,
             CapturePipelineStage.SoundDispatch => CapturePipelineState.Finalizing,
             CapturePipelineStage.Completed => CapturePipelineState.Completed,
+            CapturePipelineStage.Cancelled => CapturePipelineState.Cancelled,
             _ => CapturePipelineState.Capturing,
         };
 
@@ -331,6 +376,8 @@ public sealed class CaptureCoordinator : IDisposable
             State: state,
             HasActiveRequest: _active,
             HasPendingRequest: _pendingRequest is not null,
+            ActiveKind: _activeKind,
+            PendingKind: _pendingRequest?.Kind,
             ActiveTrigger: _activeTrigger,
             PendingTrigger: _pendingRequest?.Trigger);
 
@@ -345,6 +392,11 @@ public sealed class CaptureCoordinator : IDisposable
     private void PublishCompleted(CaptureCompletedEvent completed)
     {
         InvokeSafely(CaptureCompleted, completed);
+    }
+
+    private void PublishCancelled(CaptureCancelledEvent cancelled)
+    {
+        InvokeSafely(CaptureCancelled, cancelled);
     }
 
     private void PublishFailed(CaptureFailedEvent failed)
@@ -374,6 +426,7 @@ public sealed class CaptureCoordinator : IDisposable
 
     private sealed record CaptureRequest(
         long RequestId,
+        CaptureKind Kind,
         long RequestTimestamp,
         string Trigger,
         AppSettings Settings);

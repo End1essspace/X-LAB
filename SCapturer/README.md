@@ -1,6 +1,6 @@
 # SCapturer
 
-SCapturer is a performance-first Windows screenshot utility with global hotkeys, lossless PNG persistence, an interactive console management interface, built-in diagnostics, and a bounded asynchronous capture pipeline.
+SCapturer is a performance-first Windows screenshot utility with global hotkeys, lossless PNG persistence, an interactive console management interface, built-in diagnostics, a bounded asynchronous capture pipeline, and a native rectangular snipping overlay.
 
 The active implementation is a standalone C# application split into an executable shell and a reusable core library. The original Batch/PowerShell prototype remains under `legacy/` for historical reference only.
 
@@ -10,83 +10,83 @@ The active implementation is a standalone C# application split into an executabl
 - single-instance process guard;
 - global Windows hotkeys through `RegisterHotKey`;
 - lossless PNG capture of the complete virtual desktop;
+- rectangular region capture from one cached desktop frame;
+- one overlay spanning the complete virtual desktop;
 - multi-monitor and negative-coordinate support;
-- configurable capture folder;
+- separate configurable folders for full captures and snips;
 - optional clipboard copy and capture sound;
 - persistent JSON settings;
-- automatic migration of the previous X-LAB configuration;
-- per-stage capture timings;
-- optional JSON Lines diagnostics log;
-- repeatable baseline benchmark with median and p95 reporting;
+- per-stage capture timings and optional JSON Lines diagnostics;
+- repeatable full-capture baseline benchmark;
 - dedicated STA capture worker;
-- non-blocking hotkey and console dispatch;
 - one active capture plus one coalesced pending request;
-- graceful capture-pipeline shutdown.
+- graceful shutdown that cancels an active overlay.
 
 ## Current hotkeys
 
 | Shortcut | Action |
 | --- | --- |
 | `Ctrl + Shift + G` | Queue capture of the entire virtual desktop |
+| `Ctrl + Shift + S` | Open the rectangular snipping overlay |
 | `Ctrl + Shift + Q` | Exit SCapturer after active file work finishes |
+
+Hotkeys use `MOD_NOREPEAT`, so holding a combination does not continuously enqueue captures.
+
+## Rectangular snipping
+
+Region capture follows this pipeline:
+
+1. capture the complete virtual desktop once;
+2. create one dimmed cached frame;
+3. display a topmost overlay across all monitors;
+4. update only selection rendering while the mouse moves;
+5. crop the selected rectangle from the original cached frame;
+6. save the crop as lossless PNG;
+7. optionally publish it to the clipboard.
+
+The desktop is not captured again while the selection rectangle moves. The saved image therefore never contains the dimming layer, border, or size label.
+
+Controls:
+
+- left mouse drag — select a rectangle;
+- `Esc` — cancel;
+- right mouse button — cancel.
 
 ## Bounded capture pipeline
 
-Normal screenshots no longer execute on the hotkey message-loop thread or the console thread.
-
-SCapturer uses:
-
-- one dedicated STA capture worker;
-- one active capture;
-- one pending request slot;
-- a bounded channel used only as the worker wake-up signal.
-
-When more requests arrive while both slots are occupied, the pending request is replaced by the newest request. This prevents unbounded tasks, duplicate PNG encoders, and uncontrolled memory growth while preserving the user's latest intent.
-
-Pipeline states are visible in the console:
+Full and region requests share one dedicated STA worker:
 
 ```text
-IDLE
-QUEUED
-CAPTURING
-SAVING
-PUBLISHING
-FINALIZING
-COMPLETED
-FAILED
-STOPPING
+one active capture + one coalesced pending capture
 ```
 
-## Performance instrumentation
+Repeated requests replace only the pending request. SCapturer never starts parallel overlays or parallel PNG encoders.
 
-Each capture records:
+## Default storage
 
-- dispatch latency;
-- capture-directory preparation;
-- bitmap allocation;
-- physical pixel acquisition;
-- PNG encoding and persistence;
-- clipboard publication;
-- sound dispatch;
-- total capture duration;
-- managed allocations on the capture worker;
-- working-set values before and after capture.
-
-Diagnostics can be enabled from console option `6`. Entries are appended to:
+Full captures:
 
 ```text
-%LOCALAPPDATA%\SCapturer\diagnostics\capture-metrics.jsonl
+%USERPROFILE%\Pictures\SCapturer\Full
 ```
 
-Console option `7` runs one warm-up capture followed by ten measured captures. The benchmark now runs outside the console loop and can be cancelled during shutdown between samples. User captures are rejected while the benchmark owns the baseline capture path.
-
-Reports are saved under:
+Region captures:
 
 ```text
-%LOCALAPPDATA%\SCapturer\diagnostics\benchmarks
+%USERPROFILE%\Pictures\SCapturer\Snips
 ```
 
-See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for measurement semantics and limitations.
+Settings:
+
+```text
+%LOCALAPPDATA%\SCapturer\config.json
+```
+
+Diagnostics:
+
+```text
+%LOCALAPPDATA%\SCapturer\diagnostics
+```
 
 ## Repository structure
 
@@ -94,29 +94,16 @@ See [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) for measurement semantics and l
 SCapturer.sln
 Directory.Build.props
 src/
-  SCapturer.App/       Console executable and application lifecycle
+  SCapturer.App/
   SCapturer.Core/
     Benchmarking/
     Diagnostics/
     Models/
-    Pipeline/          Bounded coordinator and pipeline state models
+    Pipeline/
     Services/
+    Snipping/
 docs/
 legacy/
-```
-
-## Default storage
-
-New installations save full captures to:
-
-```text
-%USERPROFILE%\Pictures\SCapturer\Full
-```
-
-Settings are stored in:
-
-```text
-%LOCALAPPDATA%\SCapturer\config.json
 ```
 
 ## Development requirements
@@ -146,9 +133,10 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 ## Roadmap status
 
 - P0 — standalone C# foundation: complete;
-- P1 — SCapturer identity and solution normalization: complete;
-- P2 — performance metrics and baseline benchmark harness: complete;
-- P3 — bounded asynchronous capture pipeline: complete in this milestone;
-- P4 — high-performance rectangular snipping overlay: next.
+- P1 — product identity and solution normalization: complete;
+- P2 — performance metrics and baseline benchmark: complete;
+- P3 — bounded asynchronous capture pipeline: complete;
+- P4 — high-performance rectangular snipping overlay: complete in this milestone;
+- P5 — mixed-DPI and multi-monitor hardening: next.
 
 Part of **X-LAB** — practical automation utilities.

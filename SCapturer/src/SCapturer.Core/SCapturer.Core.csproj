@@ -3,6 +3,6 @@
     <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>SCapturer.Core</AssemblyName>
     <RootNamespace>SCapturer.Core</RootNamespace>
-    <Description>Capture, pipeline, diagnostics, hotkey, settings, and persistence services for SCapturer.</Description>
+    <Description>Capture, snipping, pipeline, diagnostics, hotkey, settings, and persistence services for SCapturer.</Description>
   </PropertyGroup>
 </Project>

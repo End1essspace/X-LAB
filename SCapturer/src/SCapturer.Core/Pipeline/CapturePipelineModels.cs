@@ -7,10 +7,14 @@ public enum CapturePipelineState
     Idle,
     Queued,
     Capturing,
+    PreparingOverlay,
+    Selecting,
+    Cropping,
     Saving,
     Publishing,
     Finalizing,
     Completed,
+    Cancelled,
     Failed,
     Stopping,
     Stopped,
@@ -21,10 +25,14 @@ public enum CapturePipelineStage
     DirectoryPreparation,
     BitmapAllocation,
     PixelAcquisition,
+    OverlayPreparation,
+    RegionSelection,
+    RegionCropping,
     PngPersistence,
     ClipboardPublication,
     SoundDispatch,
     Completed,
+    Cancelled,
 }
 
 public enum CaptureEnqueueResult
@@ -39,6 +47,8 @@ public sealed record CapturePipelineSnapshot(
     CapturePipelineState State,
     bool HasActiveRequest,
     bool HasPendingRequest,
+    CaptureKind? ActiveKind,
+    CaptureKind? PendingKind,
     string? ActiveTrigger,
     string? PendingTrigger)
 {
@@ -47,6 +57,8 @@ public sealed record CapturePipelineSnapshot(
         State: CapturePipelineState.Idle,
         HasActiveRequest: false,
         HasPendingRequest: false,
+        ActiveKind: null,
+        PendingKind: null,
         ActiveTrigger: null,
         PendingTrigger: null);
 
@@ -55,11 +67,18 @@ public sealed record CapturePipelineSnapshot(
 
 public sealed record CaptureCompletedEvent(
     long RequestId,
+    CaptureKind Kind,
     string Trigger,
     AppSettings Settings,
     CaptureResult Result);
 
+public sealed record CaptureCancelledEvent(
+    long RequestId,
+    CaptureKind Kind,
+    string Trigger);
+
 public sealed record CaptureFailedEvent(
     long RequestId,
+    CaptureKind Kind,
     string Trigger,
     Exception Exception);

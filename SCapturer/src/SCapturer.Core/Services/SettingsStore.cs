@@ -1,4 +1,3 @@
-
 using System.Text.Json;
 using SCapturer.Core.Models;
 
@@ -77,9 +76,16 @@ public sealed class SettingsStore
             var settings = JsonSerializer.Deserialize<AppSettings>(json, JsonOptions)
                 ?? AppSettings.CreateDefault();
 
+            var defaults = AppSettings.CreateDefault();
+
             if (string.IsNullOrWhiteSpace(settings.FullCaptureFolder))
             {
-                settings.FullCaptureFolder = AppSettings.CreateDefault().FullCaptureFolder;
+                settings.FullCaptureFolder = defaults.FullCaptureFolder;
+            }
+
+            if (string.IsNullOrWhiteSpace(settings.SnipCaptureFolder))
+            {
+                settings.SnipCaptureFolder = defaults.SnipCaptureFolder;
             }
 
             return settings;

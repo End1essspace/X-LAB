@@ -1,4 +1,3 @@
-
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
@@ -16,6 +15,8 @@ public sealed class HotkeyService : IDisposable
     private bool _disposed;
 
     public event Action<long>? FullCaptureRequested;
+
+    public event Action<long>? RegionCaptureRequested;
 
     public event Action? ExitRequested;
 
@@ -60,6 +61,7 @@ public sealed class HotkeyService : IDisposable
                     _startupCompleted.Set();
                 },
                 onFullCapture: () => FullCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
+                onRegionCapture: () => RegionCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
                 onExit: () => ExitRequested?.Invoke());
 
             Application.Run(_window);
@@ -102,22 +104,28 @@ public sealed class HotkeyService : IDisposable
         private const int WmHotkey = 0x0312;
         private const uint ModControl = 0x0002;
         private const uint ModShift = 0x0004;
+        private const uint ModNoRepeat = 0x4000;
         private const int FullCaptureHotkeyId = 1;
-        private const int ExitHotkeyId = 2;
+        private const int RegionCaptureHotkeyId = 2;
+        private const int ExitHotkeyId = 3;
 
         private readonly Action<Exception?> _onReady;
         private readonly Action _onFullCapture;
+        private readonly Action _onRegionCapture;
         private readonly Action _onExit;
         private bool _registeredFullCapture;
+        private bool _registeredRegionCapture;
         private bool _registeredExit;
 
         public HotkeyWindow(
             Action<Exception?> onReady,
             Action onFullCapture,
+            Action onRegionCapture,
             Action onExit)
         {
             _onReady = onReady;
             _onFullCapture = onFullCapture;
+            _onRegionCapture = onRegionCapture;
             _onExit = onExit;
 
             ShowInTaskbar = false;
@@ -134,10 +142,12 @@ public sealed class HotkeyService : IDisposable
 
             try
             {
+                var modifiers = ModControl | ModShift | ModNoRepeat;
+
                 _registeredFullCapture = RegisterHotKey(
                     Handle,
                     FullCaptureHotkeyId,
-                    ModControl | ModShift,
+                    modifiers,
                     (uint)Keys.G);
 
                 if (!_registeredFullCapture)
@@ -147,10 +157,23 @@ public sealed class HotkeyService : IDisposable
                         "Ctrl+Shift+G is unavailable.");
                 }
 
+                _registeredRegionCapture = RegisterHotKey(
+                    Handle,
+                    RegionCaptureHotkeyId,
+                    modifiers,
+                    (uint)Keys.S);
+
+                if (!_registeredRegionCapture)
+                {
+                    throw new Win32Exception(
+                        Marshal.GetLastWin32Error(),
+                        "Ctrl+Shift+S is unavailable.");
+                }
+
                 _registeredExit = RegisterHotKey(
                     Handle,
                     ExitHotkeyId,
-                    ModControl | ModShift,
+                    modifiers,
                     (uint)Keys.Q);
 
                 if (!_registeredExit)
@@ -179,6 +202,9 @@ public sealed class HotkeyService : IDisposable
                     case FullCaptureHotkeyId:
                         _onFullCapture();
                         return;
+                    case RegionCaptureHotkeyId:
+                        _onRegionCapture();
+                        return;
                     case ExitHotkeyId:
                         _onExit();
                         return;
@@ -193,6 +219,11 @@ public sealed class HotkeyService : IDisposable
             if (_registeredFullCapture)
             {
                 UnregisterHotKey(Handle, FullCaptureHotkeyId);
+            }
+
+            if (_registeredRegionCapture)
+            {
+                UnregisterHotKey(Handle, RegionCaptureHotkeyId);
             }
 
             if (_registeredExit)

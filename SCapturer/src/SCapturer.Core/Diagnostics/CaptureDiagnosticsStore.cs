@@ -1,4 +1,3 @@
-
 using System.Text.Json;
 using SCapturer.Core.Models;
 using SCapturer.Core.Services;
@@ -26,10 +25,13 @@ public sealed class CaptureDiagnosticsStore
 
         var entry = new CaptureDiagnosticEntry(
             RecordedAtUtc: DateTimeOffset.UtcNow,
+            Kind: result.Kind,
             FilePath: result.FilePath,
             Width: result.Width,
             Height: result.Height,
             FileSizeBytes: result.FileSizeBytes,
+            Region: result.Region,
+            SnipMetrics: result.SnipMetrics,
             Metrics: result.Metrics);
 
         var json = JsonSerializer.Serialize(entry, JsonOptions);
@@ -43,9 +45,12 @@ public sealed class CaptureDiagnosticsStore
 
     private sealed record CaptureDiagnosticEntry(
         DateTimeOffset RecordedAtUtc,
+        CaptureKind Kind,
         string FilePath,
         int Width,
         int Height,
         long FileSizeBytes,
+        CaptureRegion? Region,
+        SnipCaptureMetrics? SnipMetrics,
         CaptureMetrics Metrics);
 }
