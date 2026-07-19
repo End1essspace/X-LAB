@@ -612,12 +612,18 @@ internal sealed class AppController
                     .ToArray();
             }
 
+            var captureWarnings = completed.Result.Warnings is { Count: > 0 }
+                ? " Warning: " + string.Join(
+                    " ",
+                    completed.Result.Warnings.Select(warning => warning.Message))
+                : string.Empty;
+
             _statusMessage =
                 $"Saved {captureName} {completed.Result.Width}×{completed.Result.Height} PNG " +
                 $"({FormatBytes(completed.Result.FileSizeBytes)}) via " +
                 $"{completed.Result.BackendName} in " +
                 $"{completed.Result.Metrics.TotalMilliseconds:0.0} ms: " +
-                $"{completed.Result.FilePath}.{diagnosticsWarning}";
+                $"{completed.Result.FilePath}.{captureWarnings}{diagnosticsWarning}";
         }
 
         RequestRender();

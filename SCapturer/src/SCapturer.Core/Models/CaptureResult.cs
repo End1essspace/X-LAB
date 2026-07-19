@@ -28,6 +28,16 @@ public sealed record CaptureDesktopContext(
     bool IsRemoteSession,
     string DpiMode);
 
+public enum CaptureWarningKind
+{
+    StorageFallback,
+    ClipboardPublication,
+}
+
+public sealed record CaptureWarning(
+    CaptureWarningKind Kind,
+    string Message);
+
 public sealed record CaptureResult(
     string FilePath,
     int Width,
@@ -39,4 +49,5 @@ public sealed record CaptureResult(
     SnipCaptureMetrics? SnipMetrics = null,
     CaptureDesktopContext? DesktopContext = null,
     CaptureBackendKind BackendKind = CaptureBackendKind.ReferenceGdiPlus,
-    string BackendName = "Reference GDI+");
+    string BackendName = "Reference GDI+",
+    IReadOnlyList<CaptureWarning>? Warnings = null);

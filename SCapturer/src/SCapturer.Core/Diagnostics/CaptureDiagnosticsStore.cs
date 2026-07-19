@@ -35,6 +35,7 @@ public sealed class CaptureDiagnosticsStore
             DesktopContext: result.DesktopContext,
             BackendKind: result.BackendKind,
             BackendName: result.BackendName,
+            Warnings: result.Warnings,
             Metrics: result.Metrics);
 
         var json = JsonSerializer.Serialize(entry, JsonOptions);
@@ -58,5 +59,6 @@ public sealed class CaptureDiagnosticsStore
         CaptureDesktopContext? DesktopContext,
         SCapturer.Core.Capture.CaptureBackendKind BackendKind,
         string BackendName,
+        IReadOnlyList<CaptureWarning>? Warnings,
         CaptureMetrics Metrics);
 }

@@ -270,6 +270,12 @@ internal sealed class ConsoleUi
                 $"{FormatBytes(last.FileSizeBytes)} · {last.Metrics.TotalMilliseconds:0.0} ms · " +
                 last.BackendName);
             lines.Add($"                {last.FilePath}");
+
+            if (last.Warnings is { Count: > 0 })
+            {
+                lines.Add(
+                    $" Capture note  {last.Warnings.Count} warning(s); see Status or diagnostics.");
+            }
         }
 
         lines.Add(string.Empty);
@@ -363,7 +369,7 @@ internal sealed class ConsoleUi
         lines.Add(string.Empty);
         lines.Add(" Runtime     .NET 8 · Windows 10 2004+ / Windows 11");
         lines.Add(" Capture     reference GDI+ and native GDI + WIC backends");
-        lines.Add(" Selection   Auto fallback or explicit backend mode");
+        lines.Add(" Storage     atomic PNG commit · independent clipboard dispatcher");
         lines.Add(" Geometry    Per-Monitor V2 · physical virtual-desktop coordinates");
         lines.Add(" Interface   interactive console UI with differential rendering");
         lines.Add(string.Empty);

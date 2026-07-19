@@ -5,6 +5,7 @@ using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
+using SCapturer.Core.Persistence;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
 using SCapturer.Core.Snipping;
@@ -50,10 +51,18 @@ internal static class Program
             var settingsStore = new SettingsStore(paths);
             using var displayTopology = new DisplayTopologyService();
             var backendProvider = new CaptureBackendProvider();
-            var captureService = new CaptureService(displayTopology, backendProvider);
+            var persistenceService = new CapturePersistenceService();
+            using var clipboardService = new ClipboardPublicationService();
+            var captureService = new CaptureService(
+                displayTopology,
+                backendProvider,
+                persistenceService,
+                clipboardService);
             using var snippingService = new SnippingService(
                 displayTopology,
-                backendProvider);
+                backendProvider,
+                persistenceService,
+                clipboardService);
             var diagnosticsStore = new CaptureDiagnosticsStore(paths);
             var benchmarkService = new BaselineBenchmarkService(captureService, paths);
             var comparisonBenchmarkService = new BackendComparisonBenchmarkService(

@@ -1,11 +1,11 @@
 using System.Diagnostics;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Windows.Forms;
 using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
+using SCapturer.Core.Persistence;
 using SCapturer.Core.Pipeline;
 
 namespace SCapturer.Core.Snipping;
@@ -16,6 +16,8 @@ public sealed class SnippingService : IDisposable
 
     private readonly DisplayTopologyService _displayTopology;
     private readonly CaptureBackendProvider _backendProvider;
+    private readonly CapturePersistenceService _persistenceService;
+    private readonly ClipboardPublicationService _clipboardService;
     private readonly object _overlayGate = new();
 
     private SnipOverlayForm? _activeOverlay;
@@ -26,10 +28,14 @@ public sealed class SnippingService : IDisposable
 
     public SnippingService(
         DisplayTopologyService displayTopology,
-        CaptureBackendProvider backendProvider)
+        CaptureBackendProvider backendProvider,
+        CapturePersistenceService persistenceService,
+        ClipboardPublicationService clipboardService)
     {
         _displayTopology = displayTopology;
         _backendProvider = backendProvider;
+        _persistenceService = persistenceService;
+        _clipboardService = clipboardService;
         _displayTopology.TopologyChanged += OnTopologyChanged;
     }
 
@@ -57,12 +63,22 @@ public sealed class SnippingService : IDisposable
                 : 0;
 
             var backend = _backendProvider.GetBackend(settings.CaptureBackend);
+            var warnings = new List<CaptureWarning>(2);
 
             stageChanged?.Invoke(CapturePipelineStage.DirectoryPreparation);
             var stageStarted = Stopwatch.GetTimestamp();
-            Directory.CreateDirectory(settings.SnipCaptureFolder);
-            var filePath = CreateUniqueFilePath(settings.SnipCaptureFolder, "Snip");
+            var destination = _persistenceService.PrepareDestination(
+                settings.SnipCaptureFolder,
+                CaptureKind.Region,
+                "Snip");
             var directoryPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
+
+            if (!string.IsNullOrWhiteSpace(destination.Warning))
+            {
+                warnings.Add(new CaptureWarning(
+                    CaptureWarningKind.StorageFallback,
+                    destination.Warning));
+            }
 
             DisplayTopologySnapshot? topology = null;
             var bitmapAllocationMilliseconds = 0d;
@@ -179,8 +195,10 @@ public sealed class SnippingService : IDisposable
 
                 stageChanged?.Invoke(CapturePipelineStage.PngPersistence);
                 stageStarted = Stopwatch.GetTimestamp();
-                backend.SavePng(croppedImage, filePath);
-                var fileInfo = new FileInfo(filePath);
+                var persistence = _persistenceService.PersistPng(
+                    backend,
+                    croppedImage,
+                    destination);
                 var pngPersistenceMilliseconds = ElapsedMilliseconds(stageStarted);
 
                 var clipboardMilliseconds = 0d;
@@ -188,8 +206,16 @@ public sealed class SnippingService : IDisposable
                 {
                     stageChanged?.Invoke(CapturePipelineStage.ClipboardPublication);
                     stageStarted = Stopwatch.GetTimestamp();
-                    SetClipboardImageWithRetry(croppedImage.Bitmap);
+                    var clipboard = _clipboardService.Publish(croppedImage.Bitmap);
                     clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
+
+                    if (!clipboard.Success)
+                    {
+                        warnings.Add(new CaptureWarning(
+                            CaptureWarningKind.ClipboardPublication,
+                            clipboard.ErrorMessage ??
+                            "Windows did not accept the image for clipboard publication."));
+                    }
                 }
 
                 var soundMilliseconds = 0d;
@@ -223,10 +249,10 @@ public sealed class SnippingService : IDisposable
                 stageChanged?.Invoke(CapturePipelineStage.Completed);
 
                 return SnipCaptureOutcome.Completed(new CaptureResult(
-                    FilePath: filePath,
+                    FilePath: persistence.FilePath,
                     Width: croppedImage.Width,
                     Height: croppedImage.Height,
-                    FileSizeBytes: fileInfo.Length,
+                    FileSizeBytes: persistence.FileSizeBytes,
                     Metrics: metrics,
                     Kind: CaptureKind.Region,
                     Region: new CaptureRegion(
@@ -240,7 +266,8 @@ public sealed class SnippingService : IDisposable
                         CropMilliseconds: cropMilliseconds),
                     DesktopContext: CreateDesktopContext(topology),
                     BackendKind: croppedImage.BackendKind,
-                    BackendName: croppedImage.BackendName));
+                    BackendName: croppedImage.BackendName,
+                    Warnings: warnings.Count == 0 ? null : warnings.ToArray()));
             }
             finally
             {
@@ -420,38 +447,6 @@ public sealed class SnippingService : IDisposable
             VirtualBounds: topology.VirtualBounds,
             IsRemoteSession: topology.IsRemoteSession,
             DpiMode: topology.DpiMode);
-    }
-
-    private static string CreateUniqueFilePath(string directory, string prefix)
-    {
-        var baseName = $"{prefix}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}";
-        var candidate = Path.Combine(directory, baseName + ".png");
-        var suffix = 1;
-
-        while (File.Exists(candidate))
-        {
-            candidate = Path.Combine(directory, $"{baseName}_{suffix++}.png");
-        }
-
-        return candidate;
-    }
-
-    private static void SetClipboardImageWithRetry(Image image)
-    {
-        const int attempts = 6;
-
-        for (var attempt = 1; attempt <= attempts; attempt++)
-        {
-            try
-            {
-                Clipboard.SetImage(image);
-                return;
-            }
-            catch (ExternalException) when (attempt < attempts)
-            {
-                Thread.Sleep(50 * attempt);
-            }
-        }
     }
 
     private static double ElapsedMilliseconds(long startedTimestamp)

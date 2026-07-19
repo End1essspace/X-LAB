@@ -160,3 +160,14 @@ The Diagnostics page provides two separate operations:
 2. Reference GDI+ versus Native GDI + WIC comparison.
 
 During either benchmark, normal capture requests are rejected so measurements are not contaminated by concurrent capture work.
+
+## P9 capture warnings
+
+The Dashboard keeps a capture in the completed state when its PNG was committed but an optional post-processing action failed.
+
+The last-capture section displays a warning count, while the Status area contains the warning text. Structured warnings are also written to diagnostics when diagnostics are enabled.
+
+Current warning categories:
+
+- storage fallback;
+- clipboard publication.

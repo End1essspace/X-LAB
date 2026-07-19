@@ -15,7 +15,12 @@ The application publishes as one C# executable while retaining a reusable Window
 - display-topology invalidation and safe retry/cancellation;
 - reference GDI+ capture backend;
 - native GDI `CreateDIBSection` and `BitBlt` backend;
-- native WIC PNG persistence from direct BGRA memory;
+- native WIC PNG encoding from direct BGRA memory;
+- atomic same-directory PNG commit after explicit disk flush;
+- stale temporary-file cleanup and destination free-space checks;
+- automatic fallback when a configured capture folder is unavailable;
+- dedicated STA clipboard dispatcher with bounded exponential retry;
+- clipboard failures reported as warnings without invalidating saved PNG files;
 - backend availability fallback;
 - selected-backend baseline benchmark;
 - reference/native comparison benchmark with an explicit performance gate;
@@ -118,6 +123,12 @@ Diagnostics:
 %LOCALAPPDATA%\SCapturer\diagnostics
 ```
 
+PNG persistence uses a temporary file in the destination directory, flushes it to disk, then renames it to the final `.png` name. A crash or encoder failure cannot expose a partial screenshot under its final name.
+
+If a configured capture folder cannot be created or written, SCapturer saves to the corresponding default folder and records a warning. Clipboard publication is independent: a locked clipboard never deletes or invalidates an already committed PNG.
+
+See [`docs/STORAGE_AND_CLIPBOARD.md`](docs/STORAGE_AND_CLIPBOARD.md).
+
 ## Repository structure
 
 ```text
@@ -132,6 +143,7 @@ src/
     Diagnostics/
     Display/
     Models/
+    Persistence/
     Pipeline/
     Services/
     Snipping/
@@ -172,7 +184,9 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P4 — high-performance rectangular snipping overlay: complete;
 - P5 — mixed-DPI and multi-monitor hardening: complete;
 - P6 — interactive console UI v1: complete;
-- P7 — native GDI and WIC capture pipeline: implemented in this milestone;
-- P8 — GPU backend research gate: conditional on P7 results.
+- P7 — native GDI and WIC capture pipeline: complete;
+- P8 — GPU backend research gate: deferred unless measurements justify it;
+- P9 — atomic PNG persistence and clipboard hardening: complete in this milestone;
+- P10 — background lifecycle and Windows autostart: next.
 
 Part of **X-LAB** — practical automation utilities.

@@ -1,11 +1,9 @@
 using System.Diagnostics;
-using System.Drawing;
-using System.Runtime.InteropServices;
-using System.Windows.Forms;
 using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
+using SCapturer.Core.Persistence;
 using SCapturer.Core.Pipeline;
 
 namespace SCapturer.Core.Services;
@@ -16,13 +14,19 @@ public sealed class CaptureService
 
     private readonly DisplayTopologyService _displayTopology;
     private readonly CaptureBackendProvider _backendProvider;
+    private readonly CapturePersistenceService _persistenceService;
+    private readonly ClipboardPublicationService _clipboardService;
 
     public CaptureService(
         DisplayTopologyService displayTopology,
-        CaptureBackendProvider backendProvider)
+        CaptureBackendProvider backendProvider,
+        CapturePersistenceService persistenceService,
+        ClipboardPublicationService clipboardService)
     {
         _displayTopology = displayTopology;
         _backendProvider = backendProvider;
+        _persistenceService = persistenceService;
+        _clipboardService = clipboardService;
     }
 
     public CaptureResult CaptureFullDesktop(
@@ -42,12 +46,22 @@ public sealed class CaptureService
             : 0;
 
         var backend = _backendProvider.GetBackend(settings.CaptureBackend);
+        var warnings = new List<CaptureWarning>(2);
 
         stageChanged?.Invoke(CapturePipelineStage.DirectoryPreparation);
         var stageStarted = Stopwatch.GetTimestamp();
-        Directory.CreateDirectory(settings.FullCaptureFolder);
-        var filePath = CreateUniqueFilePath(settings.FullCaptureFolder, "Screenshot");
+        var destination = _persistenceService.PrepareDestination(
+            settings.FullCaptureFolder,
+            CaptureKind.FullDesktop,
+            "Screenshot");
         var directoryPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
+
+        if (!string.IsNullOrWhiteSpace(destination.Warning))
+        {
+            warnings.Add(new CaptureWarning(
+                CaptureWarningKind.StorageFallback,
+                destination.Warning));
+        }
 
         CaptureFrame? frame = null;
         DisplayTopologySnapshot? topology = null;
@@ -98,8 +112,10 @@ public sealed class CaptureService
 
             stageChanged?.Invoke(CapturePipelineStage.PngPersistence);
             stageStarted = Stopwatch.GetTimestamp();
-            backend.SavePng(frame, filePath);
-            var fileInfo = new FileInfo(filePath);
+            var persistence = _persistenceService.PersistPng(
+                backend,
+                frame,
+                destination);
             var pngPersistenceMilliseconds = ElapsedMilliseconds(stageStarted);
 
             var clipboardMilliseconds = 0d;
@@ -107,8 +123,16 @@ public sealed class CaptureService
             {
                 stageChanged?.Invoke(CapturePipelineStage.ClipboardPublication);
                 stageStarted = Stopwatch.GetTimestamp();
-                SetClipboardImageWithRetry(frame.Bitmap);
+                var clipboard = _clipboardService.Publish(frame.Bitmap);
                 clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
+
+                if (!clipboard.Success)
+                {
+                    warnings.Add(new CaptureWarning(
+                        CaptureWarningKind.ClipboardPublication,
+                        clipboard.ErrorMessage ??
+                        "Windows did not accept the image for clipboard publication."));
+                }
             }
 
             var soundMilliseconds = 0d;
@@ -142,14 +166,15 @@ public sealed class CaptureService
             stageChanged?.Invoke(CapturePipelineStage.Completed);
 
             return new CaptureResult(
-                FilePath: filePath,
+                FilePath: persistence.FilePath,
                 Width: frame.Width,
                 Height: frame.Height,
-                FileSizeBytes: fileInfo.Length,
+                FileSizeBytes: persistence.FileSizeBytes,
                 Metrics: metrics,
                 DesktopContext: CreateDesktopContext(topology),
                 BackendKind: frame.BackendKind,
-                BackendName: frame.BackendName);
+                BackendName: frame.BackendName,
+                Warnings: warnings.Count == 0 ? null : warnings.ToArray());
         }
         finally
         {
@@ -166,38 +191,6 @@ public sealed class CaptureService
             VirtualBounds: topology.VirtualBounds,
             IsRemoteSession: topology.IsRemoteSession,
             DpiMode: topology.DpiMode);
-    }
-
-    private static string CreateUniqueFilePath(string directory, string prefix)
-    {
-        var baseName = $"{prefix}_{DateTime.Now:yyyy-MM-dd_HH-mm-ss-fff}";
-        var candidate = Path.Combine(directory, baseName + ".png");
-        var suffix = 1;
-
-        while (File.Exists(candidate))
-        {
-            candidate = Path.Combine(directory, $"{baseName}_{suffix++}.png");
-        }
-
-        return candidate;
-    }
-
-    private static void SetClipboardImageWithRetry(Image image)
-    {
-        const int attempts = 6;
-
-        for (var attempt = 1; attempt <= attempts; attempt++)
-        {
-            try
-            {
-                Clipboard.SetImage(image);
-                return;
-            }
-            catch (ExternalException) when (attempt < attempts)
-            {
-                Thread.Sleep(50 * attempt);
-            }
-        }
     }
 
     private static double ElapsedMilliseconds(long startedTimestamp)

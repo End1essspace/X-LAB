@@ -30,7 +30,8 @@ Owns:
 - diagnostics, baseline reports, and backend comparison reports;
 - recent-capture discovery;
 - bounded capture coordination;
-- settings and application paths.
+- settings and application paths;
+- atomic PNG persistence and clipboard publication.
 
 ## Shared STA worker
 
@@ -107,6 +108,18 @@ Every `CaptureFrame` is disposed by the capture or snipping service.
 
 The native frame releases managed, GDI, and memory resources in deterministic order. WIC COM objects and file streams are released after each encoder transaction.
 
+## P9 persistence boundary
+
+`CapturePersistenceService` owns destination validation, fallback selection, free-space checks, temporary-file cleanup, encoding transactions, disk flush, and final same-directory rename. Capture backends only encode to the path supplied by this service.
+
+`ClipboardPublicationService` owns a separate bounded STA dispatcher. It clones the image before queueing and performs exponential retry without allowing clipboard errors to invalidate a committed PNG.
+
+`CaptureResult` can carry structured warnings for storage fallback and clipboard publication. Diagnostics and the console expose these warnings while treating the capture itself as completed.
+
+## GPU research decision
+
+P8 remains a conditional research gate. It is deferred unless measured P7 workload data demonstrates that another backend is likely to provide material value.
+
 ## Next architectural change
 
-P8 evaluates GPU capture only if the P7 comparison and workload data justify another backend. Otherwise development proceeds directly to persistence hardening.
+P10 adds background lifecycle, single-instance activation, console show/hide, and Windows autostart.

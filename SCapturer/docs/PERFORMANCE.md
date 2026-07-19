@@ -1,4 +1,4 @@
-# SCapturer Performance Baseline and P7 Native Backend
+# SCapturer Performance Baseline and P9 Persistence Hardening
 
 ## Backend architecture
 
@@ -108,3 +108,31 @@ P7 is accepted when:
 - native does not regress mixed-DPI or topology handling;
 - repeated backend switching does not leak resources;
 - console responsiveness remains equivalent to P6.
+
+
+## P9 persistence cost
+
+`PngPersistenceMilliseconds` now includes complete encoding, validation, explicit disk flush, and atomic same-directory rename. P9 baseline numbers are therefore expected to include a small durability cost compared with P7.
+
+The operation does not expose a final file until all of those steps succeed. Benchmark temporary PNG files use the same transaction, keeping production and benchmark persistence comparable.
+
+## Clipboard isolation
+
+Clipboard publication runs on a dedicated STA dispatcher and is measured in `ClipboardMilliseconds`. The dispatcher is bounded to one request and retries a locked clipboard for at most two seconds with exponential backoff.
+
+A clipboard failure adds a warning but does not change the successful PNG transaction into a failed capture. Benchmarks continue to disable clipboard publication.
+
+## Storage checks
+
+Destination folder validation is cached per process. Stale temporary cleanup runs once per folder, not on every capture. Local free-space checks are O(1) and occur before PNG encoding.
+
+## P9 acceptance checks
+
+P9 is accepted when:
+
+- persistence timings remain bounded after adding flush and rename;
+- no final partial PNG appears after a forced encoder or disk failure;
+- clipboard lock tests preserve the final PNG;
+- fallback saves include a structured warning;
+- repeated captures do not accumulate temporary files;
+- the clipboard dispatcher and capture worker remain single-instance and bounded.
