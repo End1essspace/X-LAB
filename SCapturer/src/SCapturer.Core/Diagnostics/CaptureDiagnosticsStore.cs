@@ -33,6 +33,8 @@ public sealed class CaptureDiagnosticsStore
             Region: result.Region,
             SnipMetrics: result.SnipMetrics,
             DesktopContext: result.DesktopContext,
+            BackendKind: result.BackendKind,
+            BackendName: result.BackendName,
             Metrics: result.Metrics);
 
         var json = JsonSerializer.Serialize(entry, JsonOptions);
@@ -54,5 +56,7 @@ public sealed class CaptureDiagnosticsStore
         CaptureRegion? Region,
         SnipCaptureMetrics? SnipMetrics,
         CaptureDesktopContext? DesktopContext,
+        SCapturer.Core.Capture.CaptureBackendKind BackendKind,
+        string BackendName,
         CaptureMetrics Metrics);
 }

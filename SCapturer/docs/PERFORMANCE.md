@@ -1,109 +1,110 @@
-# SCapturer Performance Baseline and P6 Console UI
+# SCapturer Performance Baseline and P7 Native Backend
 
-## Stable capture baseline
+## Backend architecture
 
-The current full-capture backend remains based on:
+P7 keeps two complete implementations behind `ICaptureBackend`.
 
-- `System.Drawing.Bitmap`;
+### Reference GDI+
+
+- managed `Bitmap` frame;
 - `Graphics.CopyFromScreen`;
-- the built-in PNG encoder.
+- GDI+ crop and PNG encoder.
 
-The P2 benchmark report schema remains compatible through P6.
+### Native GDI + WIC
 
-## Capture measurements
+- top-down 32-bit `CreateDIBSection`;
+- `BitBlt` into a reusable memory device context;
+- direct native crop with `BitBlt`;
+- WIC PNG encoder receiving the BGRA buffer through `WritePixels`.
 
-Full capture records:
+The native frame exposes a temporary `Bitmap` view over the same DIB memory for the existing overlay and clipboard boundaries. It does not copy the complete frame into a second managed bitmap.
+
+## Opaque alpha normalization
+
+A 32-bit GDI desktop DIB does not provide a reliable alpha byte. The native backend normalizes every captured pixel to opaque BGRA before WIC encoding or overlay use.
+
+This avoids transparent PNG output while preserving RGB values.
+
+The normalization pass is included in pixel-acquisition timing.
+
+## Existing measurements
+
+Both backends report the same metrics:
 
 - dispatch;
 - directory preparation;
-- bitmap allocation;
-- pixel acquisition;
+- buffer allocation;
+- physical pixel acquisition;
 - PNG persistence;
 - clipboard publication;
 - sound dispatch;
 - total duration;
-- managed allocations on the capture worker;
+- managed allocations on the capture thread;
 - working set before and after capture.
 
-Region capture additionally records:
+Each result also records the backend kind and display name.
 
-- overlay preparation;
-- user interaction;
-- crop duration.
+## Selected-backend baseline
 
-## Bounded worker
+The existing baseline benchmark uses the currently selected backend. Its report schema is version `2.0` and includes the backend mode and actual backend name.
 
-Normal captures use one STA worker with:
+This supports repeated measurements after the comparison decision.
+
+## Backend comparison
+
+The comparison benchmark runs one warm-up and ten measured captures for each backend under the same settings and target volume.
+
+The decision uses:
+
+```text
+native p95 improvement = (reference p95 - native p95) / reference p95
+native allocation improvement = (reference allocations - native allocations) / reference allocations
+```
+
+Native passes only when:
+
+- median total duration does not regress by more than 5%; and
+- p95 total duration or managed allocations improve by at least 20%.
+
+The recommended mode is persisted automatically after a successful comparison.
+
+## Resource ownership
+
+A native frame owns:
+
+- one memory device context;
+- one selected DIB section;
+- one direct pixel pointer;
+- one non-owning managed `Bitmap` view.
+
+Disposal order is fixed:
+
+1. dispose the managed view;
+2. restore the previous selected GDI object;
+3. delete the DIB section;
+4. delete the memory device context.
+
+WIC encoder, frame encoder, property bag, and output stream COM references are released after every persistence operation.
+
+## Bounded pipeline
+
+P7 does not change the queue limit:
 
 ```text
 one active request + one coalesced pending request
 ```
 
-The hotkey message thread and console thread do not perform capture or persistence work.
+No backend may start a parallel PNG encoder or create another overlay worker.
 
-## Display consistency
+## P7 acceptance checks
 
-Monitor topology is event-driven and cached. Capture uses a bounded stable-snapshot wait.
+P7 is accepted when:
 
-Full capture retries once if topology changes during pixel acquisition. Region capture cancels if its cached desktop frame becomes stale.
-
-## P6 console rendering
-
-P6 does not change the capture backend.
-
-The console renderer:
-
-- has no animation timer;
-- does not render from background threads;
-- compares complete logical frames;
-- rewrites only changed terminal lines;
-- performs a full clear only for page changes, prompts, resize, or recovery.
-
-The existing 40 ms console input loop remains the only UI polling loop. No additional idle polling was introduced.
-
-## Hotkey reconfiguration cost
-
-Hotkey parsing and validation are user-triggered operations.
-
-Registration changes execute on the hotkey STA thread and do not allocate capture buffers. A failed candidate set is rolled back before control returns to the UI.
-
-No hotkey reconfiguration work occurs during idle operation.
-
-## Recent capture cost
-
-Recent-capture directory scanning occurs only:
-
-- during application startup;
-- when entering or refreshing the Recent Captures page;
-- after capture-folder changes.
-
-Successful captures are inserted directly into the in-memory list. The capture worker does not enumerate directories after every screenshot.
-
-The list is bounded to twelve UI entries.
-
-## P6 acceptance checks
-
-P6 is accepted when:
-
-- capture and benchmark timings remain within normal P5 variance;
-- pipeline status updates do not flash the complete console;
-- arrow navigation remains responsive during PNG persistence;
-- terminal resize produces one clean redraw;
-- invalid and duplicate hotkeys are rejected;
-- unavailable Windows hotkeys leave the previous set active;
-- successful hotkey changes work immediately and survive restart;
-- recent capture opening does not block the capture worker;
-- idle CPU does not materially increase from P5.
-
-## P7 comparison rule
-
-P7 must run the same baseline benchmark before and after native backend adoption.
-
-The native backend is accepted only when it improves p95 latency or allocations without regressing:
-
-- physical pixel correctness;
-- mixed-DPI behavior;
-- overlay cancellation;
-- clipboard publication;
-- console responsiveness;
-- resource stability.
+- both backends build and create valid opaque PNG files;
+- full and region capture work through both backends;
+- WIC unavailability falls back visibly to reference;
+- the comparison report contains two complete sample sets;
+- the persisted recommendation matches the documented gate;
+- native does not regress mixed-DPI or topology handling;
+- repeated backend switching does not leak resources;
+- console responsiveness remains equivalent to P6.

@@ -1,3 +1,4 @@
+using SCapturer.Core.Capture;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
@@ -201,6 +202,11 @@ internal sealed class ConsoleUi
             $" Listener  ACTIVE   Pipeline  {FormatPipeline(model.Pipeline),-28} " +
             $"Benchmark  {(model.BenchmarkInProgress ? "RUNNING" : "IDLE")}");
 
+        var backendFallback = model.BackendSelection.IsFallback ? " · FALLBACK" : string.Empty;
+        lines.Add(
+            $" Backend   {model.BackendSelection.ActiveName} · " +
+            $"mode {FormatBackendMode(model.Settings.CaptureBackend)}{backendFallback}");
+
         lines.Add(
             $" Displays  {model.Topology.MonitorCount} · {model.Topology.DpiMode} · " +
             $"{(model.Topology.IsRemoteSession ? "REMOTE" : "LOCAL")}   " +
@@ -261,7 +267,8 @@ internal sealed class ConsoleUi
             var kind = last.Kind == CaptureKind.Region ? "REGION" : "FULL";
             lines.Add(
                 $" Last capture   {kind} · {last.Width}×{last.Height} · " +
-                $"{FormatBytes(last.FileSizeBytes)} · {last.Metrics.TotalMilliseconds:0.0} ms");
+                $"{FormatBytes(last.FileSizeBytes)} · {last.Metrics.TotalMilliseconds:0.0} ms · " +
+                last.BackendName);
             lines.Add($"                {last.FilePath}");
         }
 
@@ -275,6 +282,12 @@ internal sealed class ConsoleUi
     {
         lines.Add($" Clipboard copy  {OnOff(model.Settings.CopyToClipboard)}");
         lines.Add($" Capture sound   {OnOff(model.Settings.PlayCaptureSound)}");
+        lines.Add($" Backend mode    {FormatBackendMode(model.Settings.CaptureBackend)}");
+        lines.Add($" Active backend  {model.BackendSelection.ActiveName}");
+        if (model.BackendSelection.IsFallback)
+        {
+            lines.Add(" Fallback reason " + (model.BackendSelection.FallbackReason ?? "Unavailable native backend"));
+        }
         lines.Add(" Image format    PNG · lossless · original physical pixels");
         lines.Add(string.Empty);
         AddMenu(lines, model);
@@ -320,6 +333,7 @@ internal sealed class ConsoleUi
         lines.Add("   " + Truncate(_paths.CaptureMetricsFile, width - 4));
         lines.Add(" Benchmark reports");
         lines.Add("   " + Truncate(_paths.BenchmarkReportsDirectory, width - 4));
+        lines.Add(" Comparison gate  native needs ≥20% p95 or allocation improvement without >5% median regression");
         lines.Add(string.Empty);
         AddMenu(lines, model);
     }
@@ -348,7 +362,8 @@ internal sealed class ConsoleUi
         lines.Add(" Performance-first Windows screenshot utility.");
         lines.Add(string.Empty);
         lines.Add(" Runtime     .NET 8 · Windows 10 2004+ / Windows 11");
-        lines.Add(" Capture     one bounded STA worker · PNG lossless");
+        lines.Add(" Capture     reference GDI+ and native GDI + WIC backends");
+        lines.Add(" Selection   Auto fallback or explicit backend mode");
         lines.Add(" Geometry    Per-Monitor V2 · physical virtual-desktop coordinates");
         lines.Add(" Interface   interactive console UI with differential rendering");
         lines.Add(string.Empty);
@@ -426,6 +441,9 @@ internal sealed class ConsoleUi
                 Entry(
                     $"Toggle capture sound · currently {OnOff(model.Settings.PlayCaptureSound)}",
                     ConsoleAction.ToggleSound),
+                Entry(
+                    $"Cycle capture backend · {FormatBackendMode(model.Settings.CaptureBackend)}",
+                    ConsoleAction.CycleCaptureBackend),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
 
@@ -460,11 +478,18 @@ internal sealed class ConsoleUi
                     ConsoleAction.ToggleDiagnostics),
                 Entry(
                     model.BenchmarkInProgress
-                        ? "Baseline benchmark is running"
-                        : "Run full-capture baseline benchmark",
+                        ? "A benchmark is running"
+                        : "Run selected-backend baseline benchmark",
                     model.BenchmarkInProgress
                         ? ConsoleAction.None
                         : ConsoleAction.RunBenchmark),
+                Entry(
+                    model.BenchmarkInProgress
+                        ? "Backend comparison unavailable while benchmark runs"
+                        : "Compare Reference GDI+ vs Native GDI + WIC",
+                    model.BenchmarkInProgress
+                        ? ConsoleAction.None
+                        : ConsoleAction.RunBackendComparison),
                 Entry("Open diagnostics folder", ConsoleAction.OpenDiagnosticsFolder),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
@@ -719,6 +744,17 @@ internal sealed class ConsoleUi
     private static string FormatKind(CaptureKind kind)
     {
         return kind == CaptureKind.Region ? "REGION" : "FULL";
+    }
+
+    private static string FormatBackendMode(CaptureBackendMode mode)
+    {
+        return mode switch
+        {
+            CaptureBackendMode.Auto => "Auto",
+            CaptureBackendMode.ReferenceGdiPlus => "Reference GDI+",
+            CaptureBackendMode.NativeGdiWic => "Native GDI + WIC",
+            _ => mode.ToString(),
+        };
     }
 
     private static string OnOff(bool value) => value ? "ON" : "OFF";

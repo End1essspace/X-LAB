@@ -1,4 +1,5 @@
 using System.Text.Json;
+using SCapturer.Core.Capture;
 using SCapturer.Core.Models;
 
 namespace SCapturer.Core.Services;
@@ -101,6 +102,12 @@ public sealed class SettingsStore
     {
         var changed = false;
         var defaults = AppSettings.CreateDefault();
+
+        if (!Enum.IsDefined(typeof(CaptureBackendMode), settings.CaptureBackend))
+        {
+            settings.CaptureBackend = defaults.CaptureBackend;
+            changed = true;
+        }
 
         if (string.IsNullOrWhiteSpace(settings.FullCaptureFolder))
         {

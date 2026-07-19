@@ -1,3 +1,4 @@
+using SCapturer.Core.Capture;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
@@ -31,6 +32,7 @@ internal enum ConsoleAction
     ToggleClipboard,
     ToggleSound,
     ToggleDiagnostics,
+    CycleCaptureBackend,
     EditFullHotkey,
     EditRegionHotkey,
     EditExitHotkey,
@@ -40,6 +42,7 @@ internal enum ConsoleAction
     OpenFullFolder,
     OpenSnipFolder,
     RunBenchmark,
+    RunBackendComparison,
     OpenDiagnosticsFolder,
     RefreshRecentCaptures,
     OpenRecentCapture,
@@ -62,5 +65,6 @@ internal sealed record ConsoleViewModel(
     CaptureResult? LastCapture,
     CapturePipelineSnapshot Pipeline,
     DisplayTopologySnapshot Topology,
+    CaptureBackendSelection BackendSelection,
     bool BenchmarkInProgress,
     IReadOnlyList<RecentCaptureItem> RecentCaptures);

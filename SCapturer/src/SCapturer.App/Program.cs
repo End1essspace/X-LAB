@@ -2,6 +2,7 @@ using System.Text;
 using System.Windows.Forms;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
+using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Pipeline;
@@ -48,10 +49,17 @@ internal static class Program
             var paths = new AppPaths();
             var settingsStore = new SettingsStore(paths);
             using var displayTopology = new DisplayTopologyService();
-            var captureService = new CaptureService(displayTopology);
-            using var snippingService = new SnippingService(displayTopology);
+            var backendProvider = new CaptureBackendProvider();
+            var captureService = new CaptureService(displayTopology, backendProvider);
+            using var snippingService = new SnippingService(
+                displayTopology,
+                backendProvider);
             var diagnosticsStore = new CaptureDiagnosticsStore(paths);
             var benchmarkService = new BaselineBenchmarkService(captureService, paths);
+            var comparisonBenchmarkService = new BackendComparisonBenchmarkService(
+                benchmarkService,
+                backendProvider,
+                paths);
             using var captureCoordinator = new CaptureCoordinator(
                 captureService,
                 snippingService);
@@ -65,6 +73,8 @@ internal static class Program
                 captureCoordinator,
                 diagnosticsStore,
                 benchmarkService,
+                comparisonBenchmarkService,
+                backendProvider,
                 displayTopology,
                 hotkeyService,
                 recentCaptureService,

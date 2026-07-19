@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
@@ -13,11 +13,16 @@ namespace SCapturer.Core.Services;
 public sealed class CaptureService
 {
     private const int MaximumTopologyAttempts = 2;
-    private readonly DisplayTopologyService _displayTopology;
 
-    public CaptureService(DisplayTopologyService displayTopology)
+    private readonly DisplayTopologyService _displayTopology;
+    private readonly CaptureBackendProvider _backendProvider;
+
+    public CaptureService(
+        DisplayTopologyService displayTopology,
+        CaptureBackendProvider backendProvider)
     {
         _displayTopology = displayTopology;
+        _backendProvider = backendProvider;
     }
 
     public CaptureResult CaptureFullDesktop(
@@ -36,13 +41,15 @@ public sealed class CaptureService
             ? ElapsedMilliseconds(requestTimestamp, operationStarted)
             : 0;
 
+        var backend = _backendProvider.GetBackend(settings.CaptureBackend);
+
         stageChanged?.Invoke(CapturePipelineStage.DirectoryPreparation);
         var stageStarted = Stopwatch.GetTimestamp();
         Directory.CreateDirectory(settings.FullCaptureFolder);
         var filePath = CreateUniqueFilePath(settings.FullCaptureFolder, "Screenshot");
         var directoryPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
 
-        Bitmap? bitmap = null;
+        CaptureFrame? frame = null;
         DisplayTopologySnapshot? topology = null;
         var bitmapAllocationMilliseconds = 0d;
         var pixelAcquisitionMilliseconds = 0d;
@@ -52,38 +59,29 @@ public sealed class CaptureService
             for (var attempt = 1; attempt <= MaximumTopologyAttempts; attempt++)
             {
                 topology = _displayTopology.AcquireStableSnapshot();
-                var bounds = topology.VirtualBounds;
 
-                stageChanged?.Invoke(CapturePipelineStage.BitmapAllocation);
-                stageStarted = Stopwatch.GetTimestamp();
-                bitmap = new Bitmap(
-                    bounds.Width,
-                    bounds.Height,
-                    PixelFormat.Format32bppPArgb);
-                bitmapAllocationMilliseconds += ElapsedMilliseconds(stageStarted);
+                var capture = backend.Capture(
+                    topology.VirtualBounds,
+                    phase => stageChanged?.Invoke(phase switch
+                    {
+                        CaptureBackendPhase.BufferAllocation =>
+                            CapturePipelineStage.BitmapAllocation,
+                        CaptureBackendPhase.PixelAcquisition =>
+                            CapturePipelineStage.PixelAcquisition,
+                        _ => CapturePipelineStage.PixelAcquisition,
+                    }));
 
-                stageChanged?.Invoke(CapturePipelineStage.PixelAcquisition);
-                stageStarted = Stopwatch.GetTimestamp();
-                using (var graphics = Graphics.FromImage(bitmap))
-                {
-                    graphics.CopyFromScreen(
-                        sourceX: bounds.Left,
-                        sourceY: bounds.Top,
-                        destinationX: 0,
-                        destinationY: 0,
-                        blockRegionSize: bounds.ToRectangle().Size,
-                        copyPixelOperation: CopyPixelOperation.SourceCopy);
-                }
-
-                pixelAcquisitionMilliseconds += ElapsedMilliseconds(stageStarted);
+                frame = capture.Frame;
+                bitmapAllocationMilliseconds += capture.BufferAllocationMilliseconds;
+                pixelAcquisitionMilliseconds += capture.PixelAcquisitionMilliseconds;
 
                 if (_displayTopology.IsCurrent(topology.Version))
                 {
                     break;
                 }
 
-                bitmap.Dispose();
-                bitmap = null;
+                frame.Dispose();
+                frame = null;
 
                 if (attempt == MaximumTopologyAttempts)
                 {
@@ -92,15 +90,15 @@ public sealed class CaptureService
                 }
             }
 
-            if (bitmap is null || topology is null)
+            if (frame is null || topology is null)
             {
                 throw new InvalidOperationException(
-                    "The full-desktop capture bitmap was not initialized.");
+                    "The full-desktop capture frame was not initialized.");
             }
 
             stageChanged?.Invoke(CapturePipelineStage.PngPersistence);
             stageStarted = Stopwatch.GetTimestamp();
-            bitmap.Save(filePath, ImageFormat.Png);
+            backend.SavePng(frame, filePath);
             var fileInfo = new FileInfo(filePath);
             var pngPersistenceMilliseconds = ElapsedMilliseconds(stageStarted);
 
@@ -109,7 +107,7 @@ public sealed class CaptureService
             {
                 stageChanged?.Invoke(CapturePipelineStage.ClipboardPublication);
                 stageStarted = Stopwatch.GetTimestamp();
-                SetClipboardImageWithRetry(bitmap);
+                SetClipboardImageWithRetry(frame.Bitmap);
                 clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
             }
 
@@ -145,15 +143,17 @@ public sealed class CaptureService
 
             return new CaptureResult(
                 FilePath: filePath,
-                Width: bitmap.Width,
-                Height: bitmap.Height,
+                Width: frame.Width,
+                Height: frame.Height,
                 FileSizeBytes: fileInfo.Length,
                 Metrics: metrics,
-                DesktopContext: CreateDesktopContext(topology));
+                DesktopContext: CreateDesktopContext(topology),
+                BackendKind: frame.BackendKind,
+                BackendName: frame.BackendName);
         }
         finally
         {
-            bitmap?.Dispose();
+            frame?.Dispose();
         }
     }
 
@@ -205,8 +205,12 @@ public sealed class CaptureService
         return ElapsedMilliseconds(startedTimestamp, Stopwatch.GetTimestamp());
     }
 
-    private static double ElapsedMilliseconds(long startedTimestamp, long finishedTimestamp)
+    private static double ElapsedMilliseconds(
+        long startedTimestamp,
+        long finishedTimestamp)
     {
-        return Stopwatch.GetElapsedTime(startedTimestamp, finishedTimestamp).TotalMilliseconds;
+        return Stopwatch.GetElapsedTime(
+            startedTimestamp,
+            finishedTimestamp).TotalMilliseconds;
     }
 }

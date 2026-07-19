@@ -1,4 +1,3 @@
-
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using SCapturer.Core.Models;
@@ -43,61 +42,33 @@ public sealed class BaselineBenchmarkService
             sourceSettings.FullCaptureFolder,
             ".scapturer-benchmark");
 
-        var benchmarkSettings = new AppSettings
-        {
-            FullCaptureFolder = benchmarkCaptureFolder,
-            CopyToClipboard = false,
-            PlayCaptureSound = false,
-            EnableDiagnostics = false,
-        };
+        var benchmarkSettings = CreateBenchmarkSettings(
+            sourceSettings,
+            benchmarkCaptureFolder);
 
         Directory.CreateDirectory(benchmarkCaptureFolder);
 
         try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            progress?.Invoke(new BenchmarkProgress("Warm-up", 1, 1));
-            var warmup = _captureService.CaptureFullDesktop(
+            var samples = RunSamples(
                 benchmarkSettings,
-                trigger: "BenchmarkWarmup");
-            TryDelete(warmup.FilePath);
+                measuredIterations,
+                progress,
+                cancellationToken);
 
-            var samples = new List<BenchmarkSample>(measuredIterations);
-
-            for (var iteration = 1; iteration <= measuredIterations; iteration++)
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                progress?.Invoke(new BenchmarkProgress(
-                    "Measured capture",
-                    iteration,
-                    measuredIterations));
-
-                var result = _captureService.CaptureFullDesktop(
-                    benchmarkSettings,
-                    trigger: "Benchmark");
-
-                samples.Add(new BenchmarkSample(
-                    Iteration: iteration,
-                    Width: result.Width,
-                    Height: result.Height,
-                    FileSizeBytes: result.FileSizeBytes,
-                    Metrics: result.Metrics));
-
-                TryDelete(result.FilePath);
-            }
-
-            cancellationToken.ThrowIfCancellationRequested();
-            var summary = CreateSummary(samples);
+            var summary = BenchmarkStatistics.CreateSummary(samples);
             var first = samples[0];
 
             var report = new BenchmarkReport(
-                SchemaVersion: "1.0",
+                SchemaVersion: "2.0",
                 CreatedAtUtc: DateTimeOffset.UtcNow,
                 OperatingSystem: RuntimeInformation.OSDescription,
                 RuntimeVersion: RuntimeInformation.FrameworkDescription,
                 ProcessArchitecture: RuntimeInformation.ProcessArchitecture.ToString(),
                 ProcessorCount: Environment.ProcessorCount,
                 BenchmarkCaptureFolder: benchmarkCaptureFolder,
+                BackendName: first.BackendName,
+                BackendMode: benchmarkSettings.CaptureBackend,
                 WarmupIterations: 1,
                 MeasuredIterations: measuredIterations,
                 Width: first.Width,
@@ -114,7 +85,10 @@ public sealed class BaselineBenchmarkService
                 reportFilePath,
                 JsonSerializer.Serialize(report, JsonOptions));
 
-            return new BenchmarkRunResult(reportFilePath, summary);
+            return new BenchmarkRunResult(
+                reportFilePath,
+                first.BackendName,
+                summary);
         }
         finally
         {
@@ -122,47 +96,71 @@ public sealed class BaselineBenchmarkService
         }
     }
 
-    private static BenchmarkSummary CreateSummary(IReadOnlyList<BenchmarkSample> samples)
+    internal IReadOnlyList<BenchmarkSample> RunSamples(
+        AppSettings benchmarkSettings,
+        int measuredIterations,
+        Action<BenchmarkProgress>? progress,
+        CancellationToken cancellationToken,
+        string phasePrefix = "")
     {
-        var total = samples.Select(sample => sample.Metrics.TotalMilliseconds).ToArray();
-        var pixel = samples.Select(sample => sample.Metrics.PixelAcquisitionMilliseconds).ToArray();
-        var png = samples.Select(sample => sample.Metrics.PngPersistenceMilliseconds).ToArray();
+        cancellationToken.ThrowIfCancellationRequested();
+        progress?.Invoke(new BenchmarkProgress(
+            Prefix(phasePrefix, "Warm-up"),
+            1,
+            1));
 
-        return new BenchmarkSummary(
-            MedianTotalMilliseconds: Median(total),
-            P95TotalMilliseconds: Percentile(total, 0.95),
-            FastestTotalMilliseconds: total.Min(),
-            SlowestTotalMilliseconds: total.Max(),
-            MedianPixelAcquisitionMilliseconds: Median(pixel),
-            MedianPngPersistenceMilliseconds: Median(png),
-            AverageManagedAllocatedBytes: (long)samples.Average(
-                sample => (double)sample.Metrics.ManagedAllocatedBytes),
-            AverageFileSizeBytes: (long)samples.Average(
-                sample => (double)sample.FileSizeBytes));
+        var warmup = _captureService.CaptureFullDesktop(
+            benchmarkSettings,
+            trigger: "BenchmarkWarmup");
+        TryDelete(warmup.FilePath);
+
+        var samples = new List<BenchmarkSample>(measuredIterations);
+
+        for (var iteration = 1; iteration <= measuredIterations; iteration++)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            progress?.Invoke(new BenchmarkProgress(
+                Prefix(phasePrefix, "Measured capture"),
+                iteration,
+                measuredIterations));
+
+            var result = _captureService.CaptureFullDesktop(
+                benchmarkSettings,
+                trigger: "Benchmark");
+
+            samples.Add(new BenchmarkSample(
+                Iteration: iteration,
+                Width: result.Width,
+                Height: result.Height,
+                FileSizeBytes: result.FileSizeBytes,
+                BackendName: result.BackendName,
+                Metrics: result.Metrics));
+
+            TryDelete(result.FilePath);
+        }
+
+        return samples;
     }
 
-    private static double Median(IEnumerable<double> source)
+    internal static AppSettings CreateBenchmarkSettings(
+        AppSettings sourceSettings,
+        string benchmarkCaptureFolder)
     {
-        var ordered = source.OrderBy(value => value).ToArray();
-        var midpoint = ordered.Length / 2;
-
-        return ordered.Length % 2 == 0
-            ? (ordered[midpoint - 1] + ordered[midpoint]) / 2
-            : ordered[midpoint];
+        return new AppSettings
+        {
+            FullCaptureFolder = benchmarkCaptureFolder,
+            SnipCaptureFolder = sourceSettings.SnipCaptureFolder,
+            CopyToClipboard = false,
+            PlayCaptureSound = false,
+            EnableDiagnostics = false,
+            CaptureBackend = sourceSettings.CaptureBackend,
+            FullCaptureHotkey = sourceSettings.FullCaptureHotkey.CreateSnapshot(),
+            RegionCaptureHotkey = sourceSettings.RegionCaptureHotkey.CreateSnapshot(),
+            ExitHotkey = sourceSettings.ExitHotkey.CreateSnapshot(),
+        };
     }
 
-    private static double Percentile(IEnumerable<double> source, double percentile)
-    {
-        var ordered = source.OrderBy(value => value).ToArray();
-        var index = Math.Clamp(
-            (int)Math.Ceiling(percentile * ordered.Length) - 1,
-            0,
-            ordered.Length - 1);
-
-        return ordered[index];
-    }
-
-    private static void TryDelete(string filePath)
+    internal static void TryDelete(string filePath)
     {
         try
         {
@@ -178,7 +176,7 @@ public sealed class BaselineBenchmarkService
         }
     }
 
-    private static void TryDeleteEmptyDirectory(string directoryPath)
+    internal static void TryDeleteEmptyDirectory(string directoryPath)
     {
         try
         {
@@ -196,5 +194,12 @@ public sealed class BaselineBenchmarkService
         {
             // Cleanup is best effort and must not hide benchmark results.
         }
+    }
+
+    private static string Prefix(string prefix, string value)
+    {
+        return string.IsNullOrWhiteSpace(prefix)
+            ? value
+            : $"{prefix}: {value}";
     }
 }

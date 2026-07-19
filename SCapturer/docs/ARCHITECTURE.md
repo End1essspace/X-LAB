@@ -12,23 +12,23 @@ Owns:
 - process-level Per-Monitor V2 initialization;
 - interactive console lifecycle;
 - page navigation and differential rendering;
-- command dispatch and text prompts;
-- settings orchestration;
-- asynchronous benchmark presentation;
+- command dispatch and settings orchestration;
+- backend comparison presentation and recommendation persistence;
 - composition of core services.
 
 ### `SCapturer.Core`
 
 Owns:
 
+- capture backend interfaces and selection;
+- reference GDI+ capture and persistence;
+- native GDI frame allocation and WIC PNG encoding;
 - native display-topology discovery and invalidation;
-- full virtual-desktop capture;
 - rectangular snipping;
-- PNG persistence and clipboard publication;
+- clipboard publication;
 - global hotkey registration and live reconfiguration;
-- hotkey parsing and validation;
-- diagnostics and benchmark reports;
-- recent-capture filesystem discovery;
+- diagnostics, baseline reports, and backend comparison reports;
+- recent-capture discovery;
 - bounded capture coordination;
 - settings and application paths.
 
@@ -42,82 +42,71 @@ The coordinator remains strictly bounded:
 one active request + one coalesced pending request
 ```
 
-## P6 console boundary
+## P7 backend boundary
 
-`ConsoleUi` owns:
+`ICaptureBackend` defines:
 
-- the current page;
-- independent selection state for each page;
-- menu construction;
-- keyboard navigation;
-- text prompts;
-- differential terminal rendering.
+- physical desktop capture;
+- frame crop;
+- PNG persistence;
+- backend availability;
+- immutable backend identity.
 
-`AppController` owns:
+`CaptureFrame` exposes common dimensions and one `Bitmap` view required by the existing WinForms overlay and clipboard integration.
 
-- command execution;
-- mutable application settings;
-- hotkey reconfiguration transactions;
-- recent-capture state;
-- capture and benchmark status;
-- navigation requests.
+### Reference backend
 
-Background services never write to the terminal. They update immutable state and request a render through `AppController`.
+`ReferenceGdiPlusCaptureBackend` preserves the previous implementation:
 
-## Differential terminal rendering
+- `Bitmap` allocation;
+- `Graphics.CopyFromScreen`;
+- GDI+ crop;
+- `Bitmap.Save` PNG persistence.
 
-The UI constructs a complete logical frame for every update, then compares it with the previous normalized frame.
+### Native backend
 
-Only changed lines are written through `Console.SetCursorPosition`.
+`NativeGdiWicCaptureBackend` uses:
 
-A complete `Console.Clear` occurs only for:
+- top-down `CreateDIBSection` storage;
+- one selected memory device context;
+- `BitBlt` for desktop acquisition and region crop;
+- an opaque BGRA normalization pass;
+- direct WIC `WritePixels` PNG encoding.
 
-- page transitions;
-- text prompts;
-- terminal-size changes;
-- cursor-control recovery.
+The WIC path writes the native buffer directly to the system PNG encoder. It does not create an intermediate managed byte array.
 
-This prevents the capture state, benchmark progress, and status message from flashing the complete console.
+## Backend selection
 
-## Hotkey configuration
+`CaptureBackendProvider` resolves:
 
-Hotkeys are stored as structured settings:
+- `ReferenceGdiPlus`;
+- `NativeGdiWic` with visible fallback when unavailable;
+- `Auto`, which prefers native and falls back to reference.
 
-- modifier flags;
-- Windows virtual-key code.
+New settings default to reference. `BackendComparisonBenchmarkService` runs both implementations and persists the recommended explicit mode only after the performance gate succeeds.
 
-`HotkeyBindingService` parses display strings, validates modifier and primary-key requirements, formats bindings, and rejects duplicate SCapturer actions.
+## Display topology consistency
 
-`HotkeyService` owns the hidden Win32 message window. Reconfiguration runs synchronously on that window's STA thread.
+`DisplayTopologyService` remains the single source of physical monitor geometry.
 
-The transaction is:
+Full capture validates the topology version after backend acquisition and retries once if geometry changed.
 
-1. validate the complete candidate set;
-2. unregister the current set;
-3. register every candidate binding;
-4. keep the candidate only if every registration succeeds;
-5. otherwise unregister partial candidates and restore the previous set.
+Region capture associates one backend frame with one topology version. Any topology change closes the overlay and creates no file.
 
-Settings are persisted only after the Windows registration transaction succeeds.
+## Console boundary
 
-## Recent captures
+`ConsoleUi` owns page state, selection, prompts, and differential terminal rendering.
 
-`RecentCaptureService` scans only the configured top-level Full and Snips folders for PNG files.
+The Capture Settings page exposes backend mode and actual active backend. The Diagnostics page exposes selected-backend baseline and reference/native comparison.
 
-It returns a bounded newest-first list and tolerates files or folders disappearing during enumeration.
+Background services never write directly to the terminal.
 
-A successful capture is inserted directly into the in-memory recent list so the capture worker does not rescan the filesystem.
+## Resource boundary
 
-## Display topology boundary
+Every `CaptureFrame` is disposed by the capture or snipping service.
 
-`DisplayTopologyService` remains the single source of physical monitor geometry. It uses `EnumDisplayMonitors` and `GetMonitorInfo`, preserves negative coordinates, and invalidates cached geometry through display, power, and session events.
-
-## Capture consistency
-
-Full capture verifies the topology version after pixel acquisition and retries once if geometry changed.
-
-Region capture associates one cached frame with one topology version. Any topology change closes the overlay and creates no file.
+The native frame releases managed, GDI, and memory resources in deterministic order. WIC COM objects and file streams are released after each encoder transaction.
 
 ## Next architectural change
 
-P7 introduces a native GDI capture buffer and Windows Imaging Component PNG encoder behind explicit backend interfaces. The P2 benchmark and P6 console responsiveness must remain comparable.
+P8 evaluates GPU capture only if the P7 comparison and workload data justify another backend. Otherwise development proceeds directly to persistence hardening.

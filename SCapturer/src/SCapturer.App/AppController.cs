@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
+using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
@@ -16,6 +17,8 @@ internal sealed class AppController
     private readonly CaptureCoordinator _captureCoordinator;
     private readonly CaptureDiagnosticsStore _diagnosticsStore;
     private readonly BaselineBenchmarkService _benchmarkService;
+    private readonly BackendComparisonBenchmarkService _comparisonBenchmarkService;
+    private readonly CaptureBackendProvider _backendProvider;
     private readonly DisplayTopologyService _displayTopology;
     private readonly HotkeyService _hotkeyService;
     private readonly RecentCaptureService _recentCaptureService;
@@ -38,6 +41,8 @@ internal sealed class AppController
         CaptureCoordinator captureCoordinator,
         CaptureDiagnosticsStore diagnosticsStore,
         BaselineBenchmarkService benchmarkService,
+        BackendComparisonBenchmarkService comparisonBenchmarkService,
+        CaptureBackendProvider backendProvider,
         DisplayTopologyService displayTopology,
         HotkeyService hotkeyService,
         RecentCaptureService recentCaptureService,
@@ -48,6 +53,8 @@ internal sealed class AppController
         _captureCoordinator = captureCoordinator;
         _diagnosticsStore = diagnosticsStore;
         _benchmarkService = benchmarkService;
+        _comparisonBenchmarkService = comparisonBenchmarkService;
+        _backendProvider = backendProvider;
         _displayTopology = displayTopology;
         _hotkeyService = hotkeyService;
         _recentCaptureService = recentCaptureService;
@@ -172,6 +179,9 @@ internal sealed class AppController
             case ConsoleAction.ToggleDiagnostics:
                 SaveSettings(ToggleDiagnostics());
                 return;
+            case ConsoleAction.CycleCaptureBackend:
+                SaveSettings(CycleCaptureBackend());
+                return;
             case ConsoleAction.EditFullHotkey:
                 EditHotkey(HotkeyAction.FullCapture);
                 return;
@@ -198,6 +208,9 @@ internal sealed class AppController
                 return;
             case ConsoleAction.RunBenchmark:
                 StartBaselineBenchmark();
+                return;
+            case ConsoleAction.RunBackendComparison:
+                StartBackendComparisonBenchmark();
                 return;
             case ConsoleAction.OpenDiagnosticsFolder:
                 OpenDiagnosticsFolder();
@@ -265,6 +278,27 @@ internal sealed class AppController
         }
     }
 
+    private string CycleCaptureBackend()
+    {
+        lock (_uiStateGate)
+        {
+            _settings.CaptureBackend = _settings.CaptureBackend switch
+            {
+                CaptureBackendMode.ReferenceGdiPlus => CaptureBackendMode.NativeGdiWic,
+                CaptureBackendMode.NativeGdiWic => CaptureBackendMode.Auto,
+                _ => CaptureBackendMode.ReferenceGdiPlus,
+            };
+
+            var selection = _backendProvider.GetSelection(_settings.CaptureBackend);
+            var suffix = selection.IsFallback
+                ? $" Fallback: {selection.FallbackReason}"
+                : string.Empty;
+
+            return $"Capture backend set to {FormatBackendMode(_settings.CaptureBackend)}; " +
+                $"active {selection.ActiveName}.{suffix}";
+        }
+    }
+
     private void QueueCapture(
         CaptureKind kind,
         long requestTimestamp,
@@ -272,7 +306,7 @@ internal sealed class AppController
     {
         if (Volatile.Read(ref _benchmarkInProgress) == 1)
         {
-            SetStatus("The baseline benchmark is running; capture request ignored.");
+            SetStatus("A benchmark is running; capture request ignored.");
             return;
         }
 
@@ -329,7 +363,8 @@ internal sealed class AppController
                     cancellationToken: _shutdown.Token);
 
                 SetStatus(
-                    $"Benchmark complete. Median {result.Summary.MedianTotalMilliseconds:0.0} ms; " +
+                    $"Benchmark complete ({result.BackendName}). " +
+                    $"Median {result.Summary.MedianTotalMilliseconds:0.0} ms; " +
                     $"p95 {result.Summary.P95TotalMilliseconds:0.0} ms. " +
                     $"Report: {result.ReportFilePath}");
             }
@@ -340,6 +375,92 @@ internal sealed class AppController
             catch (Exception exception)
             {
                 SetStatus($"Benchmark failed: {exception.Message}");
+            }
+            finally
+            {
+                Volatile.Write(ref _benchmarkInProgress, 0);
+                RequestRender();
+            }
+        });
+    }
+
+    private void StartBackendComparisonBenchmark()
+    {
+        if (Interlocked.CompareExchange(ref _benchmarkInProgress, 1, 0) != 0)
+        {
+            SetStatus("A benchmark is already running.");
+            return;
+        }
+
+        if (_captureCoordinator.HasWork)
+        {
+            Volatile.Write(ref _benchmarkInProgress, 0);
+            SetStatus("Wait for the active capture queue to become idle before benchmarking.");
+            return;
+        }
+
+        if (!_backendProvider.IsNativeAvailable(out var unavailableReason))
+        {
+            Volatile.Write(ref _benchmarkInProgress, 0);
+            SetStatus($"Native backend comparison unavailable: {unavailableReason}");
+            return;
+        }
+
+        var settingsSnapshot = GetSettingsSnapshot();
+        SetStatus("Starting backend comparison: reference and native, each with 1 warm-up + 10 measured captures.");
+
+        _benchmarkTask = Task.Run(() =>
+        {
+            try
+            {
+                var result = _comparisonBenchmarkService.Run(
+                    settingsSnapshot,
+                    measuredIterations: 10,
+                    progress: progress =>
+                    {
+                        SetStatus(
+                            $"{progress.Phase}: {progress.CurrentIteration}/{progress.TotalIterations}.");
+                    },
+                    cancellationToken: _shutdown.Token);
+
+                string applyMessage;
+                try
+                {
+                    AppSettings settingsToSave;
+                    lock (_uiStateGate)
+                    {
+                        settingsToSave = _settings.CreateSnapshot();
+                    }
+
+                    settingsToSave.CaptureBackend = result.Decision.RecommendedMode;
+                    _settingsStore.Save(settingsToSave);
+
+                    lock (_uiStateGate)
+                    {
+                        _settings.CaptureBackend = result.Decision.RecommendedMode;
+                    }
+
+                    applyMessage = $" Applied {result.Decision.RecommendedBackend}.";
+                }
+                catch (Exception exception)
+                {
+                    applyMessage = $" Recommendation could not be persisted: {exception.Message}";
+                }
+
+                SetStatus(
+                    $"Backend comparison complete. Recommended: " +
+                    $"{result.Decision.RecommendedBackend}. " +
+                    $"Native p95 improvement {result.Decision.NativeP95ImprovementPercent:0.0}%; " +
+                    $"allocations {result.Decision.NativeAllocationImprovementPercent:0.0}%." +
+                    applyMessage + $" Report: {result.ReportFilePath}");
+            }
+            catch (OperationCanceledException)
+            {
+                SetStatus("Backend comparison cancelled during shutdown.");
+            }
+            catch (Exception exception)
+            {
+                SetStatus($"Backend comparison failed: {exception.Message}");
             }
             finally
             {
@@ -493,7 +614,8 @@ internal sealed class AppController
 
             _statusMessage =
                 $"Saved {captureName} {completed.Result.Width}×{completed.Result.Height} PNG " +
-                $"({FormatBytes(completed.Result.FileSizeBytes)}) in " +
+                $"({FormatBytes(completed.Result.FileSizeBytes)}) via " +
+                $"{completed.Result.BackendName} in " +
                 $"{completed.Result.Metrics.TotalMilliseconds:0.0} ms: " +
                 $"{completed.Result.FilePath}.{diagnosticsWarning}";
         }
@@ -723,12 +845,14 @@ internal sealed class AppController
     {
         lock (_uiStateGate)
         {
+            var settings = _settings.CreateSnapshot();
             return new ConsoleViewModel(
-                Settings: _settings.CreateSnapshot(),
+                Settings: settings,
                 StatusMessage: _statusMessage,
                 LastCapture: _lastCapture,
                 Pipeline: _pipelineSnapshot,
                 Topology: _displayTopology.GetSnapshot(),
+                BackendSelection: _backendProvider.GetSelection(settings.CaptureBackend),
                 BenchmarkInProgress: Volatile.Read(ref _benchmarkInProgress) == 1,
                 RecentCaptures: _recentCaptures.ToArray());
         }
@@ -842,6 +966,17 @@ internal sealed class AppController
         {
             SetStatus($"Could not open diagnostics folder: {exception.Message}");
         }
+    }
+
+    private static string FormatBackendMode(CaptureBackendMode mode)
+    {
+        return mode switch
+        {
+            CaptureBackendMode.Auto => "Auto",
+            CaptureBackendMode.ReferenceGdiPlus => "Reference GDI+",
+            CaptureBackendMode.NativeGdiWic => "Native GDI + WIC",
+            _ => mode.ToString(),
+        };
     }
 
     private static string EnabledText(bool value) => value ? "enabled" : "disabled";

@@ -1,3 +1,4 @@
+using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 
@@ -36,4 +37,6 @@ public sealed record CaptureResult(
     CaptureKind Kind = CaptureKind.FullDesktop,
     CaptureRegion? Region = null,
     SnipCaptureMetrics? SnipMetrics = null,
-    CaptureDesktopContext? DesktopContext = null);
+    CaptureDesktopContext? DesktopContext = null,
+    CaptureBackendKind BackendKind = CaptureBackendKind.ReferenceGdiPlus,
+    string BackendName = "Reference GDI+");

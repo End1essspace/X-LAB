@@ -143,3 +143,20 @@ Only the console thread:
 - opens blocking text prompts.
 
 Capture, hotkey, display-topology, and benchmark threads publish immutable state updates. They request a render but never write directly to the console.
+
+## P7 backend controls
+
+The Capture Settings page displays:
+
+- configured backend mode;
+- actual active backend;
+- visible fallback state and reason when native WIC is unavailable.
+
+Cycling the backend changes future capture requests only. Active and already-pending requests retain their settings snapshot.
+
+The Diagnostics page provides two separate operations:
+
+1. selected-backend baseline;
+2. Reference GDI+ versus Native GDI + WIC comparison.
+
+During either benchmark, normal capture requests are rejected so measurements are not contaminated by concurrent capture work.

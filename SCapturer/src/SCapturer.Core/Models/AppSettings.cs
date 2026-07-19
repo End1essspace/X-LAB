@@ -1,3 +1,5 @@
+using SCapturer.Core.Capture;
+
 namespace SCapturer.Core.Models;
 
 public sealed class AppSettings
@@ -11,6 +13,8 @@ public sealed class AppSettings
     public bool PlayCaptureSound { get; set; } = true;
 
     public bool EnableDiagnostics { get; set; }
+
+    public CaptureBackendMode CaptureBackend { get; set; } = CaptureBackendMode.ReferenceGdiPlus;
 
     public HotkeyBinding FullCaptureHotkey { get; set; } =
         HotkeyBinding.CreateDefaultFullCapture();
@@ -32,6 +36,7 @@ public sealed class AppSettings
             CopyToClipboard = CopyToClipboard,
             PlayCaptureSound = PlayCaptureSound,
             EnableDiagnostics = EnableDiagnostics,
+            CaptureBackend = CaptureBackend,
             FullCaptureHotkey = FullCaptureHotkey.CreateSnapshot(),
             RegionCaptureHotkey = RegionCaptureHotkey.CreateSnapshot(),
             ExitHotkey = ExitHotkey.CreateSnapshot(),

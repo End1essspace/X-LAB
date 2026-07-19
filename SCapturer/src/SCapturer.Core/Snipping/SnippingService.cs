@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
-using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SCapturer.Core.Capture;
 using SCapturer.Core.Diagnostics;
 using SCapturer.Core.Display;
 using SCapturer.Core.Models;
@@ -15,6 +15,7 @@ public sealed class SnippingService : IDisposable
     private const int MaximumTopologyAttempts = 2;
 
     private readonly DisplayTopologyService _displayTopology;
+    private readonly CaptureBackendProvider _backendProvider;
     private readonly object _overlayGate = new();
 
     private SnipOverlayForm? _activeOverlay;
@@ -23,9 +24,12 @@ public sealed class SnippingService : IDisposable
     private bool _captureActive;
     private bool _disposed;
 
-    public SnippingService(DisplayTopologyService displayTopology)
+    public SnippingService(
+        DisplayTopologyService displayTopology,
+        CaptureBackendProvider backendProvider)
     {
         _displayTopology = displayTopology;
+        _backendProvider = backendProvider;
         _displayTopology.TopologyChanged += OnTopologyChanged;
     }
 
@@ -40,7 +44,7 @@ public sealed class SnippingService : IDisposable
 
         BeginCapture();
 
-        Bitmap? desktopFrame = null;
+        CaptureFrame? desktopFrame = null;
 
         try
         {
@@ -51,6 +55,8 @@ public sealed class SnippingService : IDisposable
             var dispatchMilliseconds = requestTimestamp > 0
                 ? ElapsedMilliseconds(requestTimestamp, operationStarted)
                 : 0;
+
+            var backend = _backendProvider.GetBackend(settings.CaptureBackend);
 
             stageChanged?.Invoke(CapturePipelineStage.DirectoryPreparation);
             var stageStarted = Stopwatch.GetTimestamp();
@@ -73,30 +79,21 @@ public sealed class SnippingService : IDisposable
 
                 topology = _displayTopology.AcquireStableSnapshot();
                 SetActiveTopologyVersion(topology.Version);
-                var bounds = topology.VirtualBounds;
 
-                stageChanged?.Invoke(CapturePipelineStage.BitmapAllocation);
-                stageStarted = Stopwatch.GetTimestamp();
-                desktopFrame = new Bitmap(
-                    bounds.Width,
-                    bounds.Height,
-                    PixelFormat.Format32bppPArgb);
-                bitmapAllocationMilliseconds += ElapsedMilliseconds(stageStarted);
+                var capture = backend.Capture(
+                    topology.VirtualBounds,
+                    phase => stageChanged?.Invoke(phase switch
+                    {
+                        CaptureBackendPhase.BufferAllocation =>
+                            CapturePipelineStage.BitmapAllocation,
+                        CaptureBackendPhase.PixelAcquisition =>
+                            CapturePipelineStage.PixelAcquisition,
+                        _ => CapturePipelineStage.PixelAcquisition,
+                    }));
 
-                stageChanged?.Invoke(CapturePipelineStage.PixelAcquisition);
-                stageStarted = Stopwatch.GetTimestamp();
-                using (var graphics = Graphics.FromImage(desktopFrame))
-                {
-                    graphics.CopyFromScreen(
-                        sourceX: bounds.Left,
-                        sourceY: bounds.Top,
-                        destinationX: 0,
-                        destinationY: 0,
-                        blockRegionSize: bounds.ToRectangle().Size,
-                        copyPixelOperation: CopyPixelOperation.SourceCopy);
-                }
-
-                pixelAcquisitionMilliseconds += ElapsedMilliseconds(stageStarted);
+                desktopFrame = capture.Frame;
+                bitmapAllocationMilliseconds += capture.BufferAllocationMilliseconds;
+                pixelAcquisitionMilliseconds += capture.PixelAcquisitionMilliseconds;
 
                 var cancellationAfterCapture = GetCancellationReason();
                 if (cancellationAfterCapture is not null)
@@ -129,7 +126,7 @@ public sealed class SnippingService : IDisposable
 
             stageChanged?.Invoke(CapturePipelineStage.OverlayPreparation);
             stageStarted = Stopwatch.GetTimestamp();
-            using var overlay = new SnipOverlayForm(desktopFrame, topology);
+            using var overlay = new SnipOverlayForm(desktopFrame.Bitmap, topology);
             overlay.DisplayConfigurationChanged += OnOverlayDisplayConfigurationChanged;
             RegisterOverlay(overlay, topology.Version);
             var overlayPreparationMilliseconds = ElapsedMilliseconds(stageStarted);
@@ -163,7 +160,9 @@ public sealed class SnippingService : IDisposable
                 }
 
                 var selectedRegion = Rectangle.Intersect(
-                    new Rectangle(Point.Empty, desktopFrame.Size),
+                    new Rectangle(
+                        Point.Empty,
+                        new Size(desktopFrame.Width, desktopFrame.Height)),
                     overlay.SelectedRegion);
 
                 if (selectedRegion.Width < 2 || selectedRegion.Height < 2)
@@ -175,26 +174,12 @@ public sealed class SnippingService : IDisposable
 
                 stageChanged?.Invoke(CapturePipelineStage.RegionCropping);
                 stageStarted = Stopwatch.GetTimestamp();
-
-                using var croppedImage = new Bitmap(
-                    selectedRegion.Width,
-                    selectedRegion.Height,
-                    PixelFormat.Format32bppPArgb);
-
-                using (var cropGraphics = Graphics.FromImage(croppedImage))
-                {
-                    cropGraphics.DrawImage(
-                        desktopFrame,
-                        new Rectangle(0, 0, croppedImage.Width, croppedImage.Height),
-                        selectedRegion,
-                        GraphicsUnit.Pixel);
-                }
-
+                using var croppedImage = backend.Crop(desktopFrame, selectedRegion);
                 var cropMilliseconds = ElapsedMilliseconds(stageStarted);
 
                 stageChanged?.Invoke(CapturePipelineStage.PngPersistence);
                 stageStarted = Stopwatch.GetTimestamp();
-                croppedImage.Save(filePath, ImageFormat.Png);
+                backend.SavePng(croppedImage, filePath);
                 var fileInfo = new FileInfo(filePath);
                 var pngPersistenceMilliseconds = ElapsedMilliseconds(stageStarted);
 
@@ -203,7 +188,7 @@ public sealed class SnippingService : IDisposable
                 {
                     stageChanged?.Invoke(CapturePipelineStage.ClipboardPublication);
                     stageStarted = Stopwatch.GetTimestamp();
-                    SetClipboardImageWithRetry(croppedImage);
+                    SetClipboardImageWithRetry(croppedImage.Bitmap);
                     clipboardMilliseconds = ElapsedMilliseconds(stageStarted);
                 }
 
@@ -253,7 +238,9 @@ public sealed class SnippingService : IDisposable
                         OverlayPreparationMilliseconds: overlayPreparationMilliseconds,
                         InteractionMilliseconds: interactionMilliseconds,
                         CropMilliseconds: cropMilliseconds),
-                    DesktopContext: CreateDesktopContext(topology)));
+                    DesktopContext: CreateDesktopContext(topology),
+                    BackendKind: croppedImage.BackendKind,
+                    BackendName: croppedImage.BackendName));
             }
             finally
             {
@@ -472,8 +459,12 @@ public sealed class SnippingService : IDisposable
         return ElapsedMilliseconds(startedTimestamp, Stopwatch.GetTimestamp());
     }
 
-    private static double ElapsedMilliseconds(long startedTimestamp, long finishedTimestamp)
+    private static double ElapsedMilliseconds(
+        long startedTimestamp,
+        long finishedTimestamp)
     {
-        return Stopwatch.GetElapsedTime(startedTimestamp, finishedTimestamp).TotalMilliseconds;
+        return Stopwatch.GetElapsedTime(
+            startedTimestamp,
+            finishedTimestamp).TotalMilliseconds;
     }
 }
