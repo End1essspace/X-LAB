@@ -1,3 +1,4 @@
+using SCapturer.Core.Display;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
@@ -18,15 +19,24 @@ internal sealed class ConsoleUi
         string statusMessage,
         CaptureResult? lastCapture,
         CapturePipelineSnapshot pipeline,
+        DisplayTopologySnapshot topology,
         bool benchmarkInProgress)
     {
         Console.Clear();
         WriteRule("SCAPTURER");
-        Console.WriteLine(" Performance-first Windows screenshot utility — P4 rectangular snipping");
+        Console.WriteLine(" Performance-first Windows screenshot utility — P5 display hardening");
         WriteRule();
         WritePair("Listener", "ACTIVE");
         WritePair("Pipeline", FormatPipeline(pipeline));
         WritePair("Benchmark", benchmarkInProgress ? "RUNNING" : "IDLE");
+        WritePair(
+            "Displays",
+            $"{topology.MonitorCount} | {topology.DpiMode} | " +
+            (topology.IsRemoteSession ? "REMOTE" : "LOCAL"));
+        WritePair(
+            "Virtual desktop",
+            $"{topology.VirtualBounds.Width}×{topology.VirtualBounds.Height} @ " +
+            $"({topology.VirtualBounds.X},{topology.VirtualBounds.Y}) | v{topology.Version}");
         WritePair("Full capture", "Ctrl + Shift + G");
         WritePair("Region capture", "Ctrl + Shift + S");
         WritePair("Exit", "Ctrl + Shift + Q");
@@ -51,10 +61,16 @@ internal sealed class ConsoleUi
                   $"pixels {lastCapture.Metrics.PixelAcquisitionMilliseconds:0.0} ms | " +
                   $"PNG {lastCapture.Metrics.PngPersistenceMilliseconds:0.0} ms";
 
+            var displayContext = lastCapture.DesktopContext is null
+                ? string.Empty
+                : $" | displays {lastCapture.DesktopContext.MonitorCount} " +
+                  $"topology v{lastCapture.DesktopContext.TopologyVersion}";
+
             WritePair(
                 "Last capture",
                 $"{kind} {lastCapture.Width}×{lastCapture.Height} | " +
-                $"{timing} | total {lastCapture.Metrics.TotalMilliseconds:0.0} ms");
+                $"{timing} | total {lastCapture.Metrics.TotalMilliseconds:0.0} ms" +
+                displayContext);
         }
 
         WriteRule();

@@ -1,32 +1,56 @@
+using System.ComponentModel;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Windows.Forms;
+using SCapturer.Core.Display;
 
 namespace SCapturer.Core.Snipping;
 
 internal sealed class SnipOverlayForm : Form
 {
+    private const int WmDisplayChange = 0x007E;
+    private const int WmDpiChanged = 0x02E0;
+    private const int WsExToolWindow = 0x00000080;
+    private const uint SwpNoActivate = 0x0010;
+    private const uint SwpFrameChanged = 0x0020;
+    private static readonly IntPtr HwndTopMost = new(-1);
+
     private static readonly Color OverlayColor = Color.FromArgb(118, 0, 0, 0);
     private static readonly Color BorderColor = Color.White;
     private static readonly Color LabelBackground = Color.FromArgb(228, 24, 24, 24);
 
     private readonly Bitmap _desktopFrame;
     private readonly Bitmap _dimmedFrame;
+    private readonly Rectangle _physicalBounds;
 
     private Point _anchor;
     private Rectangle _selection;
     private bool _dragging;
     private bool _cancelRequested;
+    private bool _repositionScheduled;
+    private bool _interactionReady;
 
-    public SnipOverlayForm(Bitmap desktopFrame, Rectangle virtualDesktopBounds)
+    public SnipOverlayForm(
+        Bitmap desktopFrame,
+        DisplayTopologySnapshot topology)
     {
         ArgumentNullException.ThrowIfNull(desktopFrame);
+        ArgumentNullException.ThrowIfNull(topology);
 
         _desktopFrame = desktopFrame;
         _dimmedFrame = CreateDimmedFrame(desktopFrame);
+        _physicalBounds = topology.VirtualBounds.ToRectangle();
+
+        if (_physicalBounds.Size != desktopFrame.Size)
+        {
+            throw new ArgumentException(
+                "The cached desktop frame does not match the physical virtual desktop bounds.",
+                nameof(desktopFrame));
+        }
 
         AutoScaleMode = AutoScaleMode.None;
-        Bounds = virtualDesktopBounds;
+        Bounds = _physicalBounds;
         Cursor = Cursors.Cross;
         DoubleBuffered = true;
         FormBorderStyle = FormBorderStyle.None;
@@ -46,6 +70,20 @@ internal sealed class SnipOverlayForm : Form
 
     public Rectangle SelectedRegion { get; private set; }
 
+    public bool DisplayChangeDetected { get; private set; }
+
+    public event Action? DisplayConfigurationChanged;
+
+    protected override CreateParams CreateParams
+    {
+        get
+        {
+            var parameters = base.CreateParams;
+            parameters.ExStyle |= WsExToolWindow;
+            return parameters;
+        }
+    }
+
     public void RequestCancel()
     {
         _cancelRequested = true;
@@ -57,14 +95,7 @@ internal sealed class SnipOverlayForm : Form
 
         try
         {
-            if (InvokeRequired)
-            {
-                BeginInvoke((Action)CancelSelection);
-            }
-            else
-            {
-                CancelSelection();
-            }
+            BeginInvoke((Action)CancelSelection);
         }
         catch (InvalidOperationException)
         {
@@ -72,9 +103,16 @@ internal sealed class SnipOverlayForm : Form
         }
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        ApplyPhysicalBounds();
+    }
+
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        ApplyPhysicalBounds();
 
         if (_cancelRequested)
         {
@@ -82,6 +120,7 @@ internal sealed class SnipOverlayForm : Form
             return;
         }
 
+        _interactionReady = true;
         Activate();
         BringToFront();
         Focus();
@@ -198,6 +237,33 @@ internal sealed class SnipOverlayForm : Form
         base.OnKeyDown(e);
     }
 
+    protected override void WndProc(ref Message message)
+    {
+        var dpiChangedDuringInteraction =
+            message.Msg == WmDpiChanged && _interactionReady;
+
+        if (message.Msg == WmDisplayChange)
+        {
+            DisplayChangeDetected = true;
+            DisplayConfigurationChanged?.Invoke();
+            RequestCancel();
+        }
+
+        base.WndProc(ref message);
+
+        if (message.Msg == WmDpiChanged)
+        {
+            SchedulePhysicalBoundsRestore();
+
+            if (dpiChangedDuringInteraction)
+            {
+                DisplayChangeDetected = true;
+                DisplayConfigurationChanged?.Invoke();
+                RequestCancel();
+            }
+        }
+    }
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         Capture = false;
@@ -212,6 +278,52 @@ internal sealed class SnipOverlayForm : Form
         }
 
         base.Dispose(disposing);
+    }
+
+    private void ApplyPhysicalBounds()
+    {
+        if (!IsHandleCreated || IsDisposed)
+        {
+            return;
+        }
+
+        if (!SetWindowPos(
+                Handle,
+                HwndTopMost,
+                _physicalBounds.X,
+                _physicalBounds.Y,
+                _physicalBounds.Width,
+                _physicalBounds.Height,
+                SwpNoActivate | SwpFrameChanged))
+        {
+            throw new Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Windows could not position the snipping overlay over the physical virtual desktop.");
+        }
+    }
+
+    private void SchedulePhysicalBoundsRestore()
+    {
+        if (_repositionScheduled || IsDisposed || !IsHandleCreated)
+        {
+            return;
+        }
+
+        _repositionScheduled = true;
+
+        try
+        {
+            BeginInvoke((Action)(() =>
+            {
+                _repositionScheduled = false;
+                ApplyPhysicalBounds();
+                Invalidate();
+            }));
+        }
+        catch (InvalidOperationException)
+        {
+            _repositionScheduled = false;
+        }
     }
 
     private void UpdateSelection(Point currentPoint)
@@ -367,4 +479,15 @@ internal sealed class SnipOverlayForm : Form
 
         return result;
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetWindowPos(
+        IntPtr windowHandle,
+        IntPtr insertAfter,
+        int x,
+        int y,
+        int width,
+        int height,
+        uint flags);
 }

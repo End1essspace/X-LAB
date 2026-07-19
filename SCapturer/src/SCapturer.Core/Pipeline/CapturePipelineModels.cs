@@ -42,6 +42,13 @@ public enum CaptureEnqueueResult
     Stopping,
 }
 
+public enum CaptureCancellationReason
+{
+    User,
+    DisplayTopologyChanged,
+    Shutdown,
+}
+
 public sealed record CapturePipelineSnapshot(
     long Version,
     CapturePipelineState State,
@@ -75,7 +82,8 @@ public sealed record CaptureCompletedEvent(
 public sealed record CaptureCancelledEvent(
     long RequestId,
     CaptureKind Kind,
-    string Trigger);
+    string Trigger,
+    CaptureCancellationReason Reason);
 
 public sealed record CaptureFailedEvent(
     long RequestId,

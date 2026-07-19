@@ -166,7 +166,7 @@ public sealed class CaptureCoordinator : IDisposable
             }
         }
 
-        _snippingService.CancelActiveSelection();
+        _snippingService.CancelActiveSelection(CaptureCancellationReason.Shutdown);
 
         if (stoppingSnapshot is not null)
         {
@@ -227,14 +227,16 @@ public sealed class CaptureCoordinator : IDisposable
 
                     try
                     {
-                        var result = ExecuteRequest(request);
+                        var execution = ExecuteRequest(request);
+                        var result = execution.Result;
 
                         if (result is null)
                         {
                             PublishCancelled(new CaptureCancelledEvent(
                                 request.RequestId,
                                 request.Kind,
-                                request.Trigger));
+                                request.Trigger,
+                                execution.CancellationReason ?? CaptureCancellationReason.User));
 
                             FinishRequest(CapturePipelineState.Cancelled);
                             continue;
@@ -301,27 +303,36 @@ public sealed class CaptureCoordinator : IDisposable
         }
     }
 
-    private CaptureResult? ExecuteRequest(CaptureRequest request)
+    private CaptureExecutionResult ExecuteRequest(CaptureRequest request)
     {
-        return request.Kind switch
+        if (request.Kind == CaptureKind.FullDesktop)
         {
-            CaptureKind.FullDesktop => _captureService.CaptureFullDesktop(
+            return new CaptureExecutionResult(
+                _captureService.CaptureFullDesktop(
+                    request.Settings,
+                    request.RequestTimestamp,
+                    request.Trigger,
+                    UpdateStage),
+                CancellationReason: null);
+        }
+
+        if (request.Kind == CaptureKind.Region)
+        {
+            var outcome = _snippingService.CaptureRegion(
                 request.Settings,
                 request.RequestTimestamp,
                 request.Trigger,
-                UpdateStage),
+                UpdateStage);
 
-            CaptureKind.Region => _snippingService.CaptureRegion(
-                request.Settings,
-                request.RequestTimestamp,
-                request.Trigger,
-                UpdateStage),
+            return new CaptureExecutionResult(
+                outcome.Result,
+                outcome.CancellationReason);
+        }
 
-            _ => throw new ArgumentOutOfRangeException(
-                nameof(request.Kind),
-                request.Kind,
-                "Unsupported capture kind."),
-        };
+        throw new ArgumentOutOfRangeException(
+            nameof(request.Kind),
+            request.Kind,
+            "Unsupported capture kind.");
     }
 
     private void FinishRequest(CapturePipelineState finalState)
@@ -430,4 +441,8 @@ public sealed class CaptureCoordinator : IDisposable
         long RequestTimestamp,
         string Trigger,
         AppSettings Settings);
+
+    private sealed record CaptureExecutionResult(
+        CaptureResult? Result,
+        CaptureCancellationReason? CancellationReason);
 }

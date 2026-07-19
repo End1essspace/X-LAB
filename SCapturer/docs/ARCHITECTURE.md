@@ -2,15 +2,16 @@
 
 ## Current boundary
 
-SCapturer publishes as one executable but keeps application concerns and reusable Windows capture logic in separate projects.
+SCapturer publishes as one executable while separating application concerns from reusable Windows capture logic.
 
 ### `SCapturer.App`
 
 Owns:
 
 - process entry point and single-instance mutex;
+- process-level Per-Monitor V2 initialization;
 - console lifecycle and rendering;
-- command dispatch and application status;
+- command dispatch and status presentation;
 - asynchronous benchmark presentation;
 - composition of core services.
 
@@ -18,26 +19,18 @@ Owns:
 
 Owns:
 
+- native display-topology discovery and invalidation;
 - full virtual-desktop capture;
 - rectangular snipping;
 - PNG persistence and clipboard publication;
-- global hotkeys;
+- global hotkeys and display-change messages;
 - diagnostics and benchmark reports;
 - bounded capture coordination;
 - settings and application paths.
 
-## Product identity
-
-- executable: `SCapturer.exe`;
-- mutex: `Local\SCapturer.App`;
-- settings: `%LOCALAPPDATA%\SCapturer\config.json`;
-- diagnostics: `%LOCALAPPDATA%\SCapturer\diagnostics`;
-- full captures: `%USERPROFILE%\Pictures\SCapturer\Full`;
-- region captures: `%USERPROFILE%\Pictures\SCapturer\Snips`.
-
 ## Shared STA worker
 
-`CaptureCoordinator` owns one background STA thread. Full and region captures both execute there, keeping the hotkey message loop and console loop free from pixel acquisition, overlay interaction, PNG encoding, disk I/O, and clipboard calls.
+`CaptureCoordinator` owns one background STA thread. Full and region captures execute there, keeping the hotkey message loop and console loop free from pixel acquisition, overlay interaction, PNG encoding, disk I/O, and clipboard calls.
 
 The coordinator remains strictly bounded:
 
@@ -45,77 +38,90 @@ The coordinator remains strictly bounded:
 one active request + one coalesced pending request
 ```
 
-The pending slot is replaced by the newest request. Full and region requests never create parallel capture workers.
+## P5 display topology boundary
 
-## P4 snipping pipeline
+`DisplayTopologyService` is the single source of truth for physical monitor geometry.
 
-`SnippingService` performs:
+It enumerates visible monitors with:
 
-1. virtual-desktop bounds lookup;
-2. destination preparation;
-3. one full-desktop bitmap allocation;
-4. one `CopyFromScreen` operation;
-5. cached overlay construction;
-6. rectangular selection;
-7. crop from the original cached frame;
-8. PNG persistence;
-9. optional clipboard and sound publication.
+- `EnumDisplayMonitors`;
+- `GetMonitorInfo`.
 
-`SnipOverlayForm` never captures the screen. It owns:
+Each immutable snapshot contains:
 
-- the original desktop frame supplied by `SnippingService`;
-- one pre-dimmed copy;
-- selection geometry and a size label.
+- a monotonically increasing topology version;
+- the union of all physical monitor bounds;
+- each monitor device name, bounds, work area, and primary flag;
+- local or remote-session state;
+- the active Windows Forms DPI mode.
 
-Mouse movement repaints only the union of the previous and current selection areas and labels. There is no render timer and no repeated desktop acquisition.
+The service intentionally avoids using primary-monitor dimensions as the capture boundary. Negative coordinates are preserved for monitors positioned left of or above the primary display.
 
-## Coordinates
+## Topology invalidation
 
-The overlay uses client coordinates relative to the cached virtual desktop. A completed result stores absolute virtual-screen coordinates by adding `SystemInformation.VirtualScreen.Left` and `.Top`.
+The topology generation is invalidated by:
 
-This retains negative coordinates for monitors positioned left of or above the primary display.
+- `SystemEvents.DisplaySettingsChanging`;
+- `SystemEvents.DisplaySettingsChanged`;
+- `WM_DISPLAYCHANGE` received by the hotkey message window;
+- resume from sleep;
+- remote and console session transitions.
 
-## Pipeline states
+Refresh is debounced with a one-shot timer. There is no periodic display polling.
 
-P4 adds:
+Capture requests call `AcquireStableSnapshot`. If Windows is in the middle of a display transition, capture waits for a bounded stabilization interval instead of allocating a bitmap from stale dimensions.
 
-- `PreparingOverlay`;
-- `Selecting`;
-- `Cropping`;
-- `Cancelled`.
+## Full-capture consistency
 
-These extend the existing queued, capturing, saving, publishing, finalizing, completed, failed, stopping, and stopped states.
+`CaptureService` records one topology version before allocation and pixel acquisition.
 
-## Cancellation and shutdown
+After `CopyFromScreen`, it verifies that the topology is still current. If the version changed, the incomplete in-memory frame is discarded and the service retries once using the new stable topology. A PNG is written only from a topology-consistent frame.
 
-`Esc` and right-click cancel region selection without creating a file.
+Every successful `CaptureResult` includes `CaptureDesktopContext` so diagnostics can identify:
 
-During process shutdown:
+- topology version;
+- monitor count;
+- virtual bounds;
+- remote-session state;
+- DPI mode.
 
-1. new requests stop being accepted;
-2. the not-yet-started pending request is discarded;
-3. an active snipping overlay is closed through its UI thread;
-4. an active file write is allowed to finish;
-5. the worker exits.
+## Snipping consistency
 
-Shutdown therefore never opens a new interactive overlay after the user has requested exit.
+`SnippingService` captures one stable desktop frame and associates it with one topology version.
 
-## Settings snapshots
+If display topology changes before or during interaction:
 
-Every queued request receives an independent snapshot containing:
+1. the active selection receives a `DisplayTopologyChanged` cancellation reason;
+2. the overlay closes on its UI thread;
+3. no PNG is created;
+4. the cached frame is disposed;
+5. the next request acquires a fresh topology.
 
-- full capture folder;
-- snip capture folder;
-- clipboard policy;
-- sound policy;
-- diagnostics policy.
+`SnipOverlayForm` also listens directly for `WM_DISPLAYCHANGE`, providing a second invalidation path even if a higher-level system event is delayed.
 
-Console changes cannot mutate active or pending capture work.
+## Per-Monitor V2 overlay
 
-## Diagnostics compatibility
+The process enables `HighDpiMode.PerMonitorV2` before any form handle exists.
 
-The common `CaptureMetrics` record remains unchanged, preserving the P2/P3 full-capture benchmark schema. Region-only timings are stored in a separate optional `SnipCaptureMetrics` record attached to `CaptureResult`.
+The overlay uses:
+
+- `AutoScaleMode.None`;
+- one exact physical virtual-desktop rectangle;
+- `SetWindowPos` with negative-coordinate support;
+- `WM_DPICHANGED` handling that restores the exact physical bounds instead of accepting a DPI-scaled suggested rectangle.
+
+Its client coordinates therefore map directly to cached-frame pixel coordinates.
+
+## Cancellation reasons
+
+Region cancellation is explicit:
+
+- `User` — `Esc`, right-click, or an invalid tiny selection;
+- `DisplayTopologyChanged` — stale geometry or cached frame;
+- `Shutdown` — process exit while selection is active.
+
+This distinction is propagated through `CaptureCancelledEvent` to the console UI.
 
 ## Next architectural change
 
-P5 hardens physical coordinate behavior for mixed DPI, monitor topology changes, display connect/disconnect, sleep/resume, and Remote Desktop.
+P6 replaces the milestone-oriented console menu with the complete interactive console management UI, including structured settings pages, hotkey editing, recent captures, and non-flickering status updates.

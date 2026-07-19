@@ -2,6 +2,7 @@ using System.Diagnostics;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Diagnostics;
+using SCapturer.Core.Display;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
@@ -14,6 +15,7 @@ internal sealed class AppController
     private readonly CaptureCoordinator _captureCoordinator;
     private readonly CaptureDiagnosticsStore _diagnosticsStore;
     private readonly BaselineBenchmarkService _benchmarkService;
+    private readonly DisplayTopologyService _displayTopology;
     private readonly ConsoleUi _consoleUi;
     private readonly CancellationTokenSource _shutdown = new();
     private readonly object _uiStateGate = new();
@@ -31,12 +33,14 @@ internal sealed class AppController
         CaptureCoordinator captureCoordinator,
         CaptureDiagnosticsStore diagnosticsStore,
         BaselineBenchmarkService benchmarkService,
+        DisplayTopologyService displayTopology,
         ConsoleUi consoleUi)
     {
         _settingsStore = settingsStore;
         _captureCoordinator = captureCoordinator;
         _diagnosticsStore = diagnosticsStore;
         _benchmarkService = benchmarkService;
+        _displayTopology = displayTopology;
         _consoleUi = consoleUi;
         _settings = _settingsStore.Load();
 
@@ -44,6 +48,7 @@ internal sealed class AppController
         _captureCoordinator.CaptureCompleted += OnCaptureCompleted;
         _captureCoordinator.CaptureCancelled += OnCaptureCancelled;
         _captureCoordinator.CaptureFailed += OnCaptureFailed;
+        _displayTopology.TopologyChanged += OnDisplayTopologyChanged;
     }
 
     public int Run()
@@ -54,6 +59,7 @@ internal sealed class AppController
         hotkeys.FullCaptureRequested += CaptureFullFromHotkey;
         hotkeys.RegionCaptureRequested += CaptureRegionFromHotkey;
         hotkeys.ExitRequested += RequestExitFromHotkey;
+        hotkeys.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
         hotkeys.Start();
 
         SetStatus(
@@ -80,6 +86,7 @@ internal sealed class AppController
         }
         finally
         {
+            _displayTopology.TopologyChanged -= OnDisplayTopologyChanged;
             _shutdown.Cancel();
             _captureCoordinator.Stop(TimeSpan.FromSeconds(15));
             WaitForBenchmarkShutdown();
@@ -310,10 +317,29 @@ internal sealed class AppController
 
     private void OnCaptureCancelled(CaptureCancelledEvent cancelled)
     {
-        SetStatus(
-            cancelled.Kind == CaptureKind.Region
-                ? "Region capture cancelled."
-                : "Capture cancelled.");
+        var message = cancelled.Reason switch
+        {
+            CaptureCancellationReason.DisplayTopologyChanged =>
+                "Region capture cancelled because the display configuration changed.",
+            CaptureCancellationReason.Shutdown =>
+                "Region capture cancelled during shutdown.",
+            _ when cancelled.Kind == CaptureKind.Region =>
+                "Region capture cancelled.",
+            _ => "Capture cancelled.",
+        };
+
+        SetStatus(message);
+    }
+
+    private void OnDisplayTopologyChanged(DisplayTopologyChange change)
+    {
+        RequestRender();
+    }
+
+    private void OnHotkeyDisplayConfigurationChanged()
+    {
+        _displayTopology.NotifyExternalChange(
+            "The hotkey message window received WM_DISPLAYCHANGE");
     }
 
     private void OnCaptureFailed(CaptureFailedEvent failed)
@@ -434,6 +460,7 @@ internal sealed class AppController
             status,
             lastCapture,
             pipeline,
+            _displayTopology.GetSnapshot(),
             Volatile.Read(ref _benchmarkInProgress) == 1);
     }
 

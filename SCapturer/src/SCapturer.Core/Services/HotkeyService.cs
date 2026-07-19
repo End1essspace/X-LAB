@@ -20,6 +20,8 @@ public sealed class HotkeyService : IDisposable
 
     public event Action? ExitRequested;
 
+    public event Action? DisplayConfigurationChanged;
+
     public void Start()
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
@@ -62,7 +64,8 @@ public sealed class HotkeyService : IDisposable
                 },
                 onFullCapture: () => FullCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
                 onRegionCapture: () => RegionCaptureRequested?.Invoke(Stopwatch.GetTimestamp()),
-                onExit: () => ExitRequested?.Invoke());
+                onExit: () => ExitRequested?.Invoke(),
+                onDisplayConfigurationChanged: () => DisplayConfigurationChanged?.Invoke());
 
             Application.Run(_window);
         }
@@ -101,6 +104,7 @@ public sealed class HotkeyService : IDisposable
 
     private sealed class HotkeyWindow : Form
     {
+        private const int WmDisplayChange = 0x007E;
         private const int WmHotkey = 0x0312;
         private const uint ModControl = 0x0002;
         private const uint ModShift = 0x0004;
@@ -113,6 +117,7 @@ public sealed class HotkeyService : IDisposable
         private readonly Action _onFullCapture;
         private readonly Action _onRegionCapture;
         private readonly Action _onExit;
+        private readonly Action _onDisplayConfigurationChanged;
         private bool _registeredFullCapture;
         private bool _registeredRegionCapture;
         private bool _registeredExit;
@@ -121,12 +126,14 @@ public sealed class HotkeyService : IDisposable
             Action<Exception?> onReady,
             Action onFullCapture,
             Action onRegionCapture,
-            Action onExit)
+            Action onExit,
+            Action onDisplayConfigurationChanged)
         {
             _onReady = onReady;
             _onFullCapture = onFullCapture;
             _onRegionCapture = onRegionCapture;
             _onExit = onExit;
+            _onDisplayConfigurationChanged = onDisplayConfigurationChanged;
 
             ShowInTaskbar = false;
             FormBorderStyle = FormBorderStyle.None;
@@ -195,6 +202,11 @@ public sealed class HotkeyService : IDisposable
 
         protected override void WndProc(ref Message message)
         {
+            if (message.Msg == WmDisplayChange)
+            {
+                _onDisplayConfigurationChanged();
+            }
+
             if (message.Msg == WmHotkey)
             {
                 switch (message.WParam.ToInt32())

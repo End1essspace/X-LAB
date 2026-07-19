@@ -32,6 +32,7 @@ public sealed class CaptureDiagnosticsStore
             FileSizeBytes: result.FileSizeBytes,
             Region: result.Region,
             SnipMetrics: result.SnipMetrics,
+            DesktopContext: result.DesktopContext,
             Metrics: result.Metrics);
 
         var json = JsonSerializer.Serialize(entry, JsonOptions);
@@ -52,5 +53,6 @@ public sealed class CaptureDiagnosticsStore
         long FileSizeBytes,
         CaptureRegion? Region,
         SnipCaptureMetrics? SnipMetrics,
+        CaptureDesktopContext? DesktopContext,
         CaptureMetrics Metrics);
 }

@@ -3,6 +3,7 @@ using System.Windows.Forms;
 using SCapturer.App.UI;
 using SCapturer.Core.Benchmarking;
 using SCapturer.Core.Diagnostics;
+using SCapturer.Core.Display;
 using SCapturer.Core.Pipeline;
 using SCapturer.Core.Services;
 using SCapturer.Core.Snipping;
@@ -20,7 +21,14 @@ internal static class Program
         Console.InputEncoding = Encoding.UTF8;
         Console.Title = "SCapturer";
 
-        Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        var highDpiConfigured = Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        if (!highDpiConfigured && Application.HighDpiMode != HighDpiMode.PerMonitorV2)
+        {
+            Console.Error.WriteLine(
+                "SCapturer could not enable Per-Monitor V2 DPI awareness.");
+            return 3;
+        }
+
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
@@ -39,8 +47,9 @@ internal static class Program
         {
             var paths = new AppPaths();
             var settingsStore = new SettingsStore(paths);
-            var captureService = new CaptureService();
-            var snippingService = new SnippingService();
+            using var displayTopology = new DisplayTopologyService();
+            var captureService = new CaptureService(displayTopology);
+            using var snippingService = new SnippingService(displayTopology);
             var diagnosticsStore = new CaptureDiagnosticsStore(paths);
             var benchmarkService = new BaselineBenchmarkService(captureService, paths);
             using var captureCoordinator = new CaptureCoordinator(
@@ -52,6 +61,7 @@ internal static class Program
                 captureCoordinator,
                 diagnosticsStore,
                 benchmarkService,
+                displayTopology,
                 consoleUi);
 
             return app.Run();

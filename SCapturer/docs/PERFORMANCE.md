@@ -1,112 +1,99 @@
-# SCapturer Performance Baseline and P4 Snipping
+# SCapturer Performance Baseline and P5 Display Hardening
 
-## Full capture
+## Stable baseline
 
-The full-capture backend and P2 benchmark remain based on:
+The full-capture backend remains based on:
 
 - `System.Drawing.Bitmap`;
 - `Graphics.CopyFromScreen`;
 - the built-in PNG encoder.
 
-Existing measurements remain:
+The P2 benchmark report schema remains compatible through P5.
+
+## Existing measurements
+
+Full capture records:
 
 - dispatch;
 - directory preparation;
 - bitmap allocation;
 - pixel acquisition;
 - PNG persistence;
-- clipboard;
-- sound;
-- total duration.
+- clipboard publication;
+- sound dispatch;
+- total duration;
+- managed allocations on the capture worker;
+- working set before and after capture.
 
-## Region capture
+Region capture additionally records:
 
-P4 adds a separate `SnipCaptureMetrics` block with three measurements:
+- overlay preparation;
+- user interaction;
+- crop duration.
 
-- **overlay preparation** — dimmed-frame and overlay construction;
-- **interaction** — time from overlay presentation to user confirmation;
-- **crop** — creation of the selected bitmap from the cached frame.
+## P5 topology acquisition
 
-The common `CaptureMetrics` shape remains unchanged, preserving the P2/P3 full-capture benchmark report schema.
+Monitor topology is event-driven and cached. Normal idle operation performs no monitor polling.
 
-`TotalMilliseconds` includes interaction time. Use the individual fields rather than total duration when comparing capture or encoder performance.
+A capture obtains the latest stable immutable snapshot. During a display transition it waits in short bounded intervals for the one-shot refresh to complete. This wait is visible in dispatch and total latency rather than hidden from diagnostics.
 
-## Cached-frame rule
+## Full-capture retry budget
 
-A region capture performs exactly one physical desktop acquisition before the overlay appears.
+When topology changes during physical pixel acquisition:
 
-During selection:
+- the first in-memory bitmap is disposed;
+- no PNG is written;
+- a fresh topology is acquired;
+- capture retries once.
 
-- no additional `CopyFromScreen` call occurs;
-- no desktop bitmap is reallocated;
-- the dimmed frame is not regenerated;
-- no timer polls the mouse;
-- dirty-region repainting follows mouse events.
+The two-attempt ceiling prevents an endless loop when a display driver or remote session is repeatedly reconfiguring the desktop.
 
-The saved region is cropped from the original cached frame, so overlay visuals cannot enter the PNG.
+Allocation and pixel-acquisition metrics accumulate across both attempts. This exposes the real cost of a topology interruption.
 
-## Memory bound
+## Snipping invalidation
 
-While the overlay is active, P4 holds two 32-bit virtual-desktop images:
+A cached snipping frame is valid only for its captured topology version.
+
+Any display invalidation during selection closes the overlay and produces no PNG. SCapturer does not attempt to resize or reinterpret the stale frame because that would create incorrect region coordinates or stretched pixels.
+
+## Overlay DPI behavior
+
+The overlay has no render timer and performs no repeated screen acquisition.
+
+`WM_DPICHANGED` may be delivered when Windows changes the DPI associated with the spanning top-level window. The overlay restores its exact physical virtual-desktop rectangle with `SetWindowPos`, keeping the mapping:
+
+```text
+one overlay client pixel = one cached desktop pixel
+```
+
+## Memory behavior
+
+While region selection is active, SCapturer holds:
 
 ```text
 virtual width × virtual height × 4 × 2 bytes
 ```
 
-After confirmation, one selected-region bitmap exists temporarily. All images are disposed before the worker accepts another request.
+for the original and dimmed frames. A selected-region bitmap exists only after confirmation.
 
-The shared coordinator still permits only one active request and one pending request, preventing multiple overlay frame sets from existing concurrently.
+A topology cancellation disposes both full-desktop frames before the worker accepts another request.
 
-## Hotkey pressure
+## P5 acceptance checks
 
-Global hotkeys use `MOD_NOREPEAT`. Holding `Ctrl+Shift+G` or `Ctrl+Shift+S` therefore does not generate a continuous stream of requests.
+P5 is accepted when:
 
-Rapid distinct presses are still bounded by the coalesced pending slot.
+- a 100% and 150% mixed-DPI setup produces pixel-aligned snips;
+- monitors left of or above primary retain negative absolute coordinates;
+- changing primary display does not offset saved regions;
+- changing resolution during selection cancels without creating a file;
+- disconnecting a monitor during selection cancels safely;
+- full capture after topology change uses the new combined dimensions;
+- sleep/resume and Remote Desktop transitions do not require process restart;
+- console topology information updates without periodic polling;
+- repeated display changes do not leak forms, timers, GDI handles, or event subscriptions.
 
-## P4 acceptance checks
+See `DISPLAY_TEST_MATRIX.md` for the manual validation sequence.
 
-### Functional
+## P6 comparison rule
 
-- `Ctrl+Shift+S` opens one overlay over the virtual desktop.
-- Left drag saves exactly one PNG.
-- `Esc` and right-click create no file.
-- Saved pixels contain no dimming, border, or size label.
-- Clipboard content matches the saved crop.
-- Full and region folders are independent.
-- Full capture behavior remains unchanged.
-
-### Responsiveness
-
-- Overlay rendering does not run on the hotkey or console thread.
-- Mouse movement does not recapture the desktop.
-- No parallel overlays can open.
-- At most one later request remains pending.
-
-### Diagnostics
-
-A successful region entry records:
-
-- capture kind;
-- absolute virtual-screen rectangle;
-- desktop acquisition;
-- overlay preparation;
-- interaction;
-- crop;
-- PNG persistence;
-- total duration.
-
-### Resource behavior
-
-After repeated captures and cancellations:
-
-- overlay forms are disposed;
-- original, dimmed, and crop bitmaps are disposed;
-- GDI and USER handles do not grow linearly;
-- cancellation creates no PNG;
-- shutdown closes an active overlay without further input.
-
-## Benchmark scope
-
-The existing automated benchmark remains a full-desktop benchmark so P2, P3, and P4 results stay comparable. User-controlled selection time is not mixed into that benchmark.
-
-P5 can add deterministic geometry tests and overlay startup measurements without simulating human interaction.
+P6 must not change capture backend timings. Console rendering work must remain outside the capture worker, and UI improvements must not introduce idle polling beyond the existing bounded console input loop.

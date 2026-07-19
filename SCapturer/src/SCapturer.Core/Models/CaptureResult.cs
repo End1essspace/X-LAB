@@ -1,4 +1,5 @@
 using SCapturer.Core.Diagnostics;
+using SCapturer.Core.Display;
 
 namespace SCapturer.Core.Models;
 
@@ -19,6 +20,13 @@ public sealed record SnipCaptureMetrics(
     double InteractionMilliseconds,
     double CropMilliseconds);
 
+public sealed record CaptureDesktopContext(
+    long TopologyVersion,
+    int MonitorCount,
+    PhysicalRectangle VirtualBounds,
+    bool IsRemoteSession,
+    string DpiMode);
+
 public sealed record CaptureResult(
     string FilePath,
     int Width,
@@ -27,4 +35,5 @@ public sealed record CaptureResult(
     CaptureMetrics Metrics,
     CaptureKind Kind = CaptureKind.FullDesktop,
     CaptureRegion? Region = null,
-    SnipCaptureMetrics? SnipMetrics = null);
+    SnipCaptureMetrics? SnipMetrics = null,
+    CaptureDesktopContext? DesktopContext = null);
