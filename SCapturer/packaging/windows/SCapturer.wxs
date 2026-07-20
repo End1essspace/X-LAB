@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Product
+    Id="*"
+    Name="SCapturer"
+    Language="1033"
+    Version="$(var.ProductVersion)"
+    Manufacturer="X-LAB"
+    UpgradeCode="{AB09FD73-A839-4C71-B418-F828D4380CEA}">
+
+    <Package
+      Id="*"
+      InstallerVersion="500"
+      Compressed="yes"
+      InstallScope="perUser"
+      InstallPrivileges="limited"
+      Platform="x64"
+      Description="SCapturer Windows screenshot developer utility"
+      Manufacturer="X-LAB" />
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of [ProductName] is already installed."
+      Schedule="afterInstallInitialize" />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Property Id="ARPCOMMENTS" Value="Performance-first Windows screenshot developer utility by XCON / X-LAB." />
+    <Property Id="DISABLEADVTSHORTCUTS" Value="1" />
+
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="LocalAppDataFolder">
+        <Directory Id="LocalProgramsFolder" Name="Programs">
+          <Directory Id="XLabInstallFolder" Name="X-LAB">
+            <Directory Id="INSTALLFOLDER" Name="SCapturer" />
+          </Directory>
+        </Directory>
+      </Directory>
+
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="XLabProgramMenuFolder" Name="X-LAB" />
+      </Directory>
+    </Directory>
+
+    <DirectoryRef Id="INSTALLFOLDER">
+      <Component
+        Id="ApplicationComponent"
+        Guid="{6A68D5A3-1BA3-4B82-83CE-087E4AA1FE58}"
+        Win64="yes">
+        <File
+          Id="SCapturerExe"
+          Source="$(var.SourceDir)\SCapturer.exe">
+          <Shortcut
+            Id="StartMenuShortcut"
+            Directory="XLabProgramMenuFolder"
+            Name="SCapturer"
+            Description="Open the SCapturer developer console"
+            WorkingDirectory="INSTALLFOLDER"
+            Advertise="no" />
+        </File>
+
+        <RegistryValue
+          Id="ApplicationComponentKeyPath"
+          Root="HKCU"
+          Key="Software\X-LAB\SCapturer"
+          Name="InstalledVersion"
+          Type="string"
+          Value="[ProductVersion]"
+          KeyPath="yes" />
+
+        <RemoveFolder
+          Id="RemoveInstallFolder"
+          Directory="INSTALLFOLDER"
+          On="uninstall" />
+        <RemoveFolder
+          Id="RemoveXLabInstallFolder"
+          Directory="XLabInstallFolder"
+          On="uninstall" />
+        <RemoveFolder
+          Id="RemoveLocalProgramsFolder"
+          Directory="LocalProgramsFolder"
+          On="uninstall" />
+        <RemoveFolder
+          Id="RemoveXLabProgramMenuFolder"
+          Directory="XLabProgramMenuFolder"
+          On="uninstall" />
+      </Component>
+    </DirectoryRef>
+
+    <Feature Id="Complete" Title="SCapturer" Level="1">
+      <ComponentRef Id="ApplicationComponent" />
+    </Feature>
+
+    <CustomAction
+      Id="ShutdownForMaintenance"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[INSTALLFOLDER]SCapturer.exe&quot; --shutdown-for-update"
+      Execute="immediate"
+      Return="check"
+      Impersonate="yes" />
+
+    <CustomAction
+      Id="PrepareUninstall"
+      Directory="INSTALLFOLDER"
+      ExeCommand="&quot;[INSTALLFOLDER]SCapturer.exe&quot; --prepare-uninstall"
+      Execute="immediate"
+      Return="check"
+      Impersonate="yes" />
+
+    <InstallExecuteSequence>
+      <Custom Action="ShutdownForMaintenance" After="CostFinalize">
+        WIX_UPGRADE_DETECTED OR (Installed AND NOT REMOVE="ALL")
+      </Custom>
+      <Custom Action="PrepareUninstall" After="ShutdownForMaintenance">
+        REMOVE="ALL" AND NOT UPGRADINGPRODUCTCODE
+      </Custom>
+    </InstallExecuteSequence>
+  </Product>
+</Wix>

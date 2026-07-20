@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Reflection;
 using System.Runtime.InteropServices;
 
 namespace SCapturer.App.Lifecycle;
@@ -121,14 +120,10 @@ internal sealed class ConsoleCloseHandoffService : IDisposable
                 WindowStyle = ProcessWindowStyle.Hidden,
             };
 
-            var entryAssemblyLocation = Assembly.GetEntryAssembly()?.Location;
-            if (IsDotnetHost(executablePath) &&
-                !string.IsNullOrWhiteSpace(entryAssemblyLocation) &&
-                entryAssemblyLocation.EndsWith(
-                    ".dll",
-                    StringComparison.OrdinalIgnoreCase))
+            var managedEntryPath = ResolveManagedEntryPath(executablePath);
+            if (managedEntryPath is not null)
             {
-                startInfo.ArgumentList.Add(entryAssemblyLocation);
+                startInfo.ArgumentList.Add(managedEntryPath);
             }
 
             startInfo.ArgumentList.Add(
@@ -143,6 +138,22 @@ internal sealed class ConsoleCloseHandoffService : IDisposable
         }
     }
 
+
+    private static string? ResolveManagedEntryPath(string executablePath)
+    {
+        if (!IsDotnetHost(executablePath))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(
+            AppContext.BaseDirectory,
+            "SCapturer.dll");
+
+        return File.Exists(candidate)
+            ? candidate
+            : null;
+    }
 
     private static bool IsDotnetHost(string executablePath)
     {

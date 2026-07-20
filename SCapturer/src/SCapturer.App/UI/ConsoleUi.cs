@@ -1,3 +1,4 @@
+using System.Reflection;
 using SCapturer.Core.Capture;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
@@ -624,9 +625,12 @@ internal sealed class ConsoleUi
         lines.Add(SectionLine("SCAPTURER"));
         lines.Add(FieldRow(
             width,
-            new FieldCell("Author", "XCON", ConsoleColor.Cyan),
-            new FieldCell("Project", "X-LAB", ConsoleColor.DarkCyan),
+            new FieldCell("Version", ProductVersion(), ConsoleColor.Cyan),
             new FieldCell("Runtime", ".NET 8", ConsoleColor.Gray)));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell("Author", "XCON", ConsoleColor.Cyan),
+            new FieldCell("Project", "X-LAB", ConsoleColor.DarkCyan)));
         lines.Add(Blank());
         lines.Add(LabelValueLine(
             "Purpose",
@@ -1489,6 +1493,24 @@ internal sealed class ConsoleUi
         var rightLength = Math.Max(1, (width - 1) / 2);
         var leftLength = width - rightLength - 1;
         return value[..leftLength] + "…" + value[^rightLength..];
+    }
+
+    private static string ProductVersion()
+    {
+        var assembly = typeof(ConsoleUi).Assembly;
+        var informational = assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?
+            .InformationalVersion;
+
+        if (!string.IsNullOrWhiteSpace(informational))
+        {
+            var metadataSeparator = informational.IndexOf('+');
+            return metadataSeparator >= 0
+                ? informational[..metadataSeparator]
+                : informational;
+        }
+
+        return assembly.GetName().Version?.ToString(3) ?? "unknown";
     }
 
     private static string FormatBytes(long bytes)

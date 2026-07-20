@@ -124,3 +124,14 @@ SCapturer handles this through a controlled background handoff:
 4. launching the EXE or pressing the console hotkey shows the management console again.
 
 This path is used only for the native close button. **Hide console**, `--hide`, and the console hotkey continue hiding the existing process without restart. An active capture should be allowed to finish before pressing `X`, because Windows controls the close-event termination deadline.
+
+## Installer maintenance commands
+
+The packaged MSI uses two internal executable arguments:
+
+```text
+--shutdown-for-update
+--prepare-uninstall
+```
+
+Both request graceful shutdown through the existing single-instance IPC path and wait up to 45 seconds for the primary mutex to be released. `--prepare-uninstall` additionally removes the current-user SCapturer autostart value. These arguments are reserved for installer maintenance and are not shown in the normal command list.

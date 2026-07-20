@@ -125,6 +125,23 @@ internal static class Program
         Assert.Equal(4242, resume.ResumeAfterProcessId);
         Assert.Equal(AppInstanceCommand.None, resume.PrimaryCommand);
         Assert.Equal(AppInstanceCommand.None, resume.SecondaryCommand);
+
+        var update = AppLaunchOptions.Parse(["--shutdown-for-update"]);
+        Assert.True(update.IsValid);
+        Assert.True(update.StartHidden);
+        Assert.True(update.WaitForSecondaryExit);
+        Assert.False(update.RemoveAutostart);
+        Assert.True(update.IsMaintenanceCommand);
+        Assert.Equal(AppInstanceCommand.Exit, update.PrimaryCommand);
+        Assert.Equal(AppInstanceCommand.Exit, update.SecondaryCommand);
+
+        var uninstall = AppLaunchOptions.Parse(["--prepare-uninstall"]);
+        Assert.True(uninstall.IsValid);
+        Assert.True(uninstall.WaitForSecondaryExit);
+        Assert.True(uninstall.RemoveAutostart);
+        Assert.True(uninstall.IsMaintenanceCommand);
+        Assert.Equal(AppInstanceCommand.Exit, uninstall.PrimaryCommand);
+        Assert.Equal(AppInstanceCommand.Exit, uninstall.SecondaryCommand);
     }
 
     private static void LaunchOptionValidation()

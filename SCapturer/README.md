@@ -189,6 +189,10 @@ tests/
   SCapturer.Tests/
 tools/
   SCapturer.Reliability/
+packaging/
+  portable/
+  windows/
+scripts/
 docs/
 legacy/
 ```
@@ -197,7 +201,8 @@ legacy/
 
 - Windows 11 x64 — primary target;
 - Windows 10 version 2004 or newer — best-effort compatibility;
-- .NET 8 SDK.
+- .NET 8 SDK;
+- WiX Toolset 3.14 for MSI generation.
 
 ## Build
 
@@ -229,11 +234,35 @@ The reliability baseline is taken after representative full-capture, IPC, consol
 
 Reports are written under `artifacts/reliability`. See [`docs/RELIABILITY.md`](docs/RELIABILITY.md).
 
-## Publish as one self-contained EXE
+## Release packaging
+
+SCapturer v0.1.0 is packaged as both a portable ZIP and a per-user MSI from the same self-contained single-file `win-x64` publish output. An application icon is intentionally deferred.
+
+Build a complete release candidate:
 
 ```powershell
-dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o .\dist\SCapturer
+.\scripts\build-release.ps1 -Version 0.1.0
 ```
+
+Output:
+
+```text
+dist\release\0.1.0\
+├─ SCapturer-v0.1.0-win-x64-portable.zip
+├─ SCapturer-v0.1.0-win-x64.msi
+├─ RELEASE_NOTES.md
+└─ SHA256SUMS.txt
+```
+
+The MSI installs per-user to `%LOCALAPPDATA%\Programs\X-LAB\SCapturer`, creates a Start Menu shortcut, preserves user screenshots/settings during uninstall, and uses internal maintenance commands to stop a running instance gracefully before repair, upgrade, or removal. Windows autostart remains opt-in inside SCapturer.
+
+To publish only the executable:
+
+```powershell
+dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -p:PublishProfile=win-x64 -p:Version=0.1.0 -p:AssemblyVersion=0.1.0.0 -p:FileVersion=0.1.0.0 -p:InformationalVersion=0.1.0 -o .\dist\publish\win-x64
+```
+
+See [`docs/PACKAGING.md`](docs/PACKAGING.md) and [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
 
 ## Roadmap status
 
@@ -248,7 +277,8 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P8 — GPU backend research gate: deferred unless measurements justify it;
 - P9 — atomic PNG persistence and clipboard hardening: complete;
 - P10 — background lifecycle and Windows autostart: complete;
-- P11 — automated reliability tests and resource-soak validation: complete.
-- P12 — developer-console telemetry layout, semantic color, event feed, and close-button lifecycle polish: complete.
+- P11 — automated reliability tests and resource-soak validation: complete;
+- P12 — developer-console telemetry layout, semantic color, event feed, and close-button lifecycle polish: complete;
+- P13 — portable and per-user MSI release packaging: implemented, Windows packaging validation pending.
 
 Created by **XCON** as part of **X-LAB** — practical automation utilities.

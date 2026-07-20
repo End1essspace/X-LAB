@@ -17,11 +17,16 @@ internal sealed record AppLaunchOptions(
     AppInstanceCommand PrimaryCommand,
     AppInstanceCommand SecondaryCommand,
     int? ResumeAfterProcessId,
+    bool WaitForSecondaryExit,
+    bool RemoveAutostart,
     string? ErrorMessage)
 {
     private const string ResumeBackgroundPrefix = "--resume-background=";
 
     public bool IsValid => string.IsNullOrWhiteSpace(ErrorMessage);
+
+    public bool IsMaintenanceCommand =>
+        WaitForSecondaryExit || RemoveAutostart;
 
     public static AppLaunchOptions Parse(IReadOnlyList<string> arguments)
     {
@@ -99,6 +104,19 @@ internal sealed record AppLaunchOptions(
                 primaryCommand: AppInstanceCommand.Exit,
                 secondaryCommand: AppInstanceCommand.Exit),
 
+            "--shutdown-for-update" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.Exit,
+                secondaryCommand: AppInstanceCommand.Exit,
+                waitForSecondaryExit: true),
+
+            "--prepare-uninstall" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.Exit,
+                secondaryCommand: AppInstanceCommand.Exit,
+                waitForSecondaryExit: true,
+                removeAutostart: true),
+
             _ => Invalid(
                 "Unknown argument. Supported: --background, --show, --hide, " +
                 "--toggle-console, --capture-full, --capture-region, " +
@@ -110,13 +128,17 @@ internal sealed record AppLaunchOptions(
         bool startHidden,
         AppInstanceCommand primaryCommand,
         AppInstanceCommand secondaryCommand,
-        int? resumeAfterProcessId = null)
+        int? resumeAfterProcessId = null,
+        bool waitForSecondaryExit = false,
+        bool removeAutostart = false)
     {
         return new AppLaunchOptions(
             startHidden,
             primaryCommand,
             secondaryCommand,
             resumeAfterProcessId,
+            waitForSecondaryExit,
+            removeAutostart,
             ErrorMessage: null);
     }
 
@@ -127,6 +149,8 @@ internal sealed record AppLaunchOptions(
             PrimaryCommand: AppInstanceCommand.None,
             SecondaryCommand: AppInstanceCommand.None,
             ResumeAfterProcessId: null,
+            WaitForSecondaryExit: false,
+            RemoveAutostart: false,
             ErrorMessage: message);
     }
 }

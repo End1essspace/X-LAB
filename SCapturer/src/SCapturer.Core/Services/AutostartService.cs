@@ -1,4 +1,3 @@
-using System.Reflection;
 using Microsoft.Win32;
 
 namespace SCapturer.Core.Services;
@@ -86,7 +85,26 @@ public sealed class AutostartService
 
         return CreateCommand(
             processPath,
-            Assembly.GetEntryAssembly()?.Location);
+            ResolveManagedEntryPath(processPath));
+    }
+
+    private static string? ResolveManagedEntryPath(string processPath)
+    {
+        if (!string.Equals(
+                Path.GetFileNameWithoutExtension(processPath),
+                "dotnet",
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var candidate = Path.Combine(
+            AppContext.BaseDirectory,
+            "SCapturer.dll");
+
+        return File.Exists(candidate)
+            ? candidate
+            : null;
     }
 
     internal static string CreateCommand(

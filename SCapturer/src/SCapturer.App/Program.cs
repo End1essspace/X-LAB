@@ -41,6 +41,27 @@ internal static class Program
             ConsoleCloseHandoffService.WaitForPreviousProcess(previousProcessId);
         }
 
+        if (launchOptions.RemoveAutostart)
+        {
+            try
+            {
+                _ = new AutostartService().Disable();
+            }
+            catch (Exception exception)
+                when (exception is IOException or
+                      UnauthorizedAccessException or
+                      System.Security.SecurityException)
+            {
+                if (!launchOptions.IsMaintenanceCommand)
+                {
+                    consoleVisibility.Show();
+                    Console.Error.WriteLine(exception.Message);
+                }
+
+                return 7;
+            }
+        }
+
         var highDpiConfigured = Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         if (!highDpiConfigured && Application.HighDpiMode != HighDpiMode.PerMonitorV2)
         {
@@ -65,12 +86,28 @@ internal static class Program
                     TimeSpan.FromSeconds(3),
                     out var activationError))
             {
-                return 0;
+                if (!launchOptions.WaitForSecondaryExit)
+                {
+                    return 0;
+                }
+
+                return WaitForPrimaryInstanceExit(
+                    instanceMutex,
+                    TimeSpan.FromSeconds(45),
+                    out var waitError)
+                    ? 0
+                    : ReportMaintenanceFailure(
+                        launchOptions,
+                        consoleVisibility,
+                        waitError,
+                        exitCode: 5);
             }
 
-            consoleVisibility.Show();
-            Console.Error.WriteLine(activationError);
-            return 2;
+            return ReportMaintenanceFailure(
+                launchOptions,
+                consoleVisibility,
+                activationError,
+                exitCode: 2);
         }
 
         if (launchOptions.PrimaryCommand == AppInstanceCommand.Exit)
@@ -161,6 +198,59 @@ internal static class Program
 
             return 1;
         }
+    }
+
+    private static bool WaitForPrimaryInstanceExit(
+        Mutex instanceMutex,
+        TimeSpan timeout,
+        out string? errorMessage)
+    {
+        var acquired = false;
+        errorMessage = null;
+
+        try
+        {
+            try
+            {
+                acquired = instanceMutex.WaitOne(timeout);
+            }
+            catch (AbandonedMutexException)
+            {
+                acquired = true;
+            }
+
+            if (!acquired)
+            {
+                errorMessage =
+                    "The running SCapturer instance did not finish graceful shutdown " +
+                    $"within {timeout.TotalSeconds:0} seconds.";
+                return false;
+            }
+
+            return true;
+        }
+        finally
+        {
+            if (acquired)
+            {
+                instanceMutex.ReleaseMutex();
+            }
+        }
+    }
+
+    private static int ReportMaintenanceFailure(
+        AppLaunchOptions launchOptions,
+        ConsoleVisibilityService consoleVisibility,
+        string? message,
+        int exitCode)
+    {
+        if (!launchOptions.IsMaintenanceCommand)
+        {
+            consoleVisibility.Show();
+            Console.Error.WriteLine(message);
+        }
+
+        return exitCode;
     }
 
     private static bool IsEnvironmentFlagEnabled(string variableName)
