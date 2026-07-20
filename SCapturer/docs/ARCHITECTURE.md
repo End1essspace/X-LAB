@@ -98,9 +98,11 @@ Region capture associates one backend frame with one topology version. Any topol
 
 ## Console boundary
 
-`ConsoleUi` owns page state, selection, prompts, and differential terminal rendering.
+`ConsoleUi` owns page state, retained selection, prompts, page-aware window titles, and differential terminal rendering. It builds explicit styled spans rather than scanning arbitrary text for keywords, so semantic colors remain bound to known state fields.
 
-The Capture Settings page exposes backend mode and actual active backend. The Diagnostics page exposes selected-backend baseline and reference/native comparison.
+`AppController` owns a bounded in-memory session event queue used only by the Dashboard. The queue records status, IPC, capture, and display-topology events without becoming a persistent logging dependency.
+
+The Capture Settings page exposes requested backend mode and actual active backend separately. The Diagnostics page exposes selected-backend baseline and reference/native comparison.
 
 Background services never write directly to the terminal.
 

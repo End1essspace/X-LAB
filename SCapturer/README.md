@@ -1,6 +1,6 @@
 # SCapturer
 
-SCapturer is a performance-first Windows screenshot utility with lossless full-desktop capture, a cached-frame rectangular snipping overlay, configurable global hotkeys, diagnostics, and an interactive console management interface.
+SCapturer is a performance-first Windows screenshot developer utility by **XCON**, built under **X-LAB**, with lossless full-desktop capture, a cached-frame rectangular snipping overlay, configurable global hotkeys, diagnostics, and an interactive console management interface.
 
 The application publishes as one C# executable while retaining a reusable Windows capture core. The original Batch/PowerShell proof of concept remains under `legacy/` only as historical reference.
 
@@ -8,7 +8,9 @@ The application publishes as one C# executable while retaining a reusable Window
 
 - interactive page-based console UI;
 - styled differential rendering without continuous `Console.Clear`;
-- semantic console colors for runtime state, warnings, failures, hotkeys, and selection;
+- semantic console colors limited to explicit state fields, severity tokens, hotkeys, and selection;
+- fixed-column runtime telemetry, structured last-capture details, and a bounded session event feed;
+- context-aware footer controls and page-aware console-window titles;
 - configurable global hotkeys with rollback;
 - complete physical virtual-desktop capture;
 - cached-frame rectangular region capture;
@@ -247,6 +249,6 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P9 — atomic PNG persistence and clipboard hardening: complete;
 - P10 — background lifecycle and Windows autostart: complete;
 - P11 — automated reliability tests and resource-soak validation: complete.
-- P12 — developer-console semantic color and close-button lifecycle polish: complete.
+- P12 — developer-console telemetry layout, semantic color, event feed, and close-button lifecycle polish: complete.
 
-Part of **X-LAB** — practical automation utilities.
+Created by **XCON** as part of **X-LAB** — practical automation utilities.

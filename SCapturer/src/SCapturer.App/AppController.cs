@@ -14,6 +14,8 @@ namespace SCapturer.App;
 
 internal sealed class AppController
 {
+    private const int MaximumSessionEvents = 8;
+
     private readonly AppPaths _paths;
     private readonly SettingsStore _settingsStore;
     private readonly AutostartService _autostartService;
@@ -33,6 +35,7 @@ internal sealed class AppController
     private readonly CancellationTokenSource _shutdown = new();
     private readonly ConcurrentQueue<AppInstanceCommand> _externalCommands = new();
     private readonly object _uiStateGate = new();
+    private readonly Queue<ConsoleEventItem> _sessionEvents = new();
 
     private AppSettings _settings;
     private CaptureResult? _lastCapture;
@@ -117,11 +120,7 @@ internal sealed class AppController
             _hotkeyService.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
             _hotkeyService.Start(HotkeyBindingService.CreateSet(initialSettings));
 
-            SetStatus(
-                $"Listener active. Full {HotkeyBindingService.Format(initialSettings.FullCaptureHotkey)}; " +
-                $"region {HotkeyBindingService.Format(initialSettings.RegionCaptureHotkey)}; " +
-                $"console {HotkeyBindingService.Format(initialSettings.ToggleConsoleHotkey)}; " +
-                $"exit {HotkeyBindingService.Format(initialSettings.ExitHotkey)}.");
+            SetStatus("Listener active · 4 global hotkeys registered.");
         }
         else
         {
@@ -680,22 +679,19 @@ internal sealed class AppController
                     .Take(12)
                     .ToArray();
             }
-
-            var captureWarnings = completed.Result.Warnings is { Count: > 0 }
-                ? " Warning: " + string.Join(
-                    " ",
-                    completed.Result.Warnings.Select(warning => warning.Message))
-                : string.Empty;
-
-            _statusMessage =
-                $"Saved {captureName} {completed.Result.Width}×{completed.Result.Height} PNG " +
-                $"({FormatBytes(completed.Result.FileSizeBytes)}) via " +
-                $"{completed.Result.BackendName} in " +
-                $"{completed.Result.Metrics.TotalMilliseconds:0.0} ms: " +
-                $"{completed.Result.FilePath}.{captureWarnings}{diagnosticsWarning}";
         }
 
-        RequestRender();
+        var captureWarnings = completed.Result.Warnings is { Count: > 0 }
+            ? " Warning: " + string.Join(
+                " ",
+                completed.Result.Warnings.Select(warning => warning.Message))
+            : string.Empty;
+
+        SetStatus(
+            $"Saved {captureName} {completed.Result.Width}×{completed.Result.Height} PNG · " +
+            $"{FormatBytes(completed.Result.FileSizeBytes)} · " +
+            $"{completed.Result.Metrics.TotalMilliseconds:0.0} ms · " +
+            $"{completed.Result.BackendName}.{captureWarnings}{diagnosticsWarning}");
     }
 
     private void OnCaptureCancelled(CaptureCancelledEvent cancelled)
@@ -716,7 +712,12 @@ internal sealed class AppController
 
     private void OnDisplayTopologyChanged(DisplayTopologyChange change)
     {
-        RequestRender();
+        RecordEvent(
+            change.IsStable ? ConsoleEventLevel.Info : ConsoleEventLevel.Warning,
+            change.IsStable
+                ? $"Display topology confirmed · v{change.Version} · " +
+                  $"{change.Snapshot.MonitorCount} display(s)."
+                : $"Display topology changing · {change.Reason}.");
     }
 
     private void OnHotkeyDisplayConfigurationChanged()
@@ -1037,7 +1038,8 @@ internal sealed class AppController
                 StartedInBackground: _startedInBackground,
                 Autostart: _autostartStatus,
                 BenchmarkInProgress: Volatile.Read(ref _benchmarkInProgress) == 1,
-                RecentCaptures: _recentCaptures.ToArray());
+                RecentCaptures: _recentCaptures.ToArray(),
+                Events: _sessionEvents.ToArray());
         }
     }
 
@@ -1051,12 +1053,104 @@ internal sealed class AppController
 
     private void SetStatus(string message)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(message);
+
         lock (_uiStateGate)
         {
             _statusMessage = message;
+
+            AppendEventLocked(ClassifyStatus(message), message);
         }
 
         RequestRender();
+    }
+
+
+    private void RecordEvent(
+        ConsoleEventLevel level,
+        string message)
+    {
+        lock (_uiStateGate)
+        {
+            AppendEventLocked(level, message);
+        }
+
+        RequestRender();
+    }
+
+    private void AppendEventLocked(
+        ConsoleEventLevel level,
+        string message)
+    {
+        if (_sessionEvents.Count > 0 &&
+            string.Equals(
+                _sessionEvents.Last().Message,
+                message,
+                StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        _sessionEvents.Enqueue(new ConsoleEventItem(
+            DateTimeOffset.Now,
+            level,
+            message));
+
+        while (_sessionEvents.Count > MaximumSessionEvents)
+        {
+            _sessionEvents.Dequeue();
+        }
+    }
+
+    private static ConsoleEventLevel ClassifyStatus(string message)
+    {
+        if (ContainsAny(
+                message,
+                "failed",
+                "could not",
+                "rejected",
+                "fatal error",
+                "error:"))
+        {
+            return ConsoleEventLevel.Error;
+        }
+
+        if (ContainsAny(
+                message,
+                "warning",
+                "fallback",
+                "cancelled",
+                "ignored",
+                "unavailable",
+                "stale",
+                "busy"))
+        {
+            return ConsoleEventLevel.Warning;
+        }
+
+        if (ContainsAny(
+                message,
+                "saved",
+                "complete",
+                "enabled",
+                "restored",
+                "opened",
+                "listener active",
+                "changed to"))
+        {
+            return ConsoleEventLevel.Success;
+        }
+
+        return ConsoleEventLevel.Info;
+    }
+
+    private static bool ContainsAny(
+        string source,
+        params string[] values)
+    {
+        return values.Any(value => source.Contains(
+            value,
+            StringComparison.OrdinalIgnoreCase));
     }
 
     private void RequestRender()

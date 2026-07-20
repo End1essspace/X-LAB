@@ -36,6 +36,7 @@ internal sealed class ConsoleUi
     {
         _currentPage = page;
         _forceFullRedraw = true;
+        TrySetWindowTitle();
     }
 
     public void Invalidate()
@@ -123,8 +124,8 @@ internal sealed class ConsoleUi
 
     public void Render(ConsoleViewModel model)
     {
-        var lines = BuildFrame(model);
-        RenderDiff(lines);
+        TrySetWindowTitle();
+        RenderDiff(BuildFrame(model));
     }
 
     public string? PromptForText(
@@ -136,18 +137,30 @@ internal sealed class ConsoleUi
 
         try
         {
+            Console.ForegroundColor = ConsoleColor.Cyan;
             Console.WriteLine(title);
-            Console.WriteLine(new string('─', Math.Min(78, Math.Max(20, SafeWindowWidth() - 1))));
-            Console.WriteLine($"Current: {currentValue}");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine(new string(
+                '─',
+                Math.Min(78, Math.Max(20, SafeWindowWidth() - 1))));
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("Current   ");
+            Console.ForegroundColor = ConsoleColor.Gray;
+            Console.WriteLine(currentValue);
             Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Gray;
             Console.WriteLine(instructions);
+            Console.ForegroundColor = ConsoleColor.DarkGray;
             Console.WriteLine("Leave empty to cancel.");
             Console.WriteLine();
-            Console.Write("> ");
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.Write("New       > ");
+            Console.ForegroundColor = ConsoleColor.White;
             return Console.ReadLine();
         }
         finally
         {
+            Console.ResetColor();
             TrySetCursorVisible(false);
             _forceFullRedraw = true;
             _lastRenderedLines = Array.Empty<StyledConsoleLine>();
@@ -165,82 +178,136 @@ internal sealed class ConsoleUi
         catch (Exception exception)
             when (exception is IOException or InvalidOperationException)
         {
-            // The console may already be detached during process teardown.
+            // The console may already be unavailable during process teardown.
         }
     }
 
-    private IReadOnlyList<string> BuildFrame(ConsoleViewModel model)
+    private IReadOnlyList<StyledConsoleLine> BuildFrame(ConsoleViewModel model)
     {
         var width = SafeWindowWidth();
         var height = SafeWindowHeight();
+        var contentWidth = Math.Max(1, width - 1);
 
         if (width < MinimumUsefulWidth || height < MinimumUsefulHeight)
         {
             return
             [
-                "SCapturer",
-                string.Empty,
-                $"Console window is too small ({width}×{height}).",
-                $"Resize it to at least {MinimumUsefulWidth}×{MinimumUsefulHeight}.",
-                string.Empty,
-                $"Status: {model.StatusMessage}",
+                Plain("SCapturer", ConsoleColor.Cyan),
+                Blank(),
+                Plain(
+                    $"Console window is too small ({width}×{height}).",
+                    ConsoleColor.Yellow),
+                Plain(
+                    $"Resize it to at least {MinimumUsefulWidth}×{MinimumUsefulHeight}.",
+                    ConsoleColor.Gray),
+                Blank(),
+                StatusLine(model.StatusMessage, LastStatusLevel(model)),
             ];
         }
 
-        var lines = new List<string>(48);
-        var title = PageTitle(_currentPage);
+        var lines = new List<StyledConsoleLine>(52)
+        {
+            CenteredTitleLine($"SCAPTURER · {PageTitle(_currentPage)}", contentWidth),
+            RuleLine(contentWidth),
+            SectionLine("RUNTIME"),
+        };
 
-        lines.Add(CenterTitle($"SCAPTURER · {title}", width));
-        lines.Add(Rule(width));
-
-        AddHeader(lines, model);
-        lines.Add(Rule(width));
-
-        AddPageContent(lines, model, width);
-
-        lines.Add(Rule(width));
-        AddFooter(lines, model, width);
+        AddHeader(lines, model, contentWidth);
+        lines.Add(Blank());
+        AddPageContent(lines, model, contentWidth, height);
+        lines.Add(RuleLine(contentWidth));
+        AddFooter(lines, model, contentWidth);
 
         return lines;
     }
 
-    private void AddHeader(
-        ICollection<string> lines,
-        ConsoleViewModel model)
+    private static void AddHeader(
+        ICollection<StyledConsoleLine> lines,
+        ConsoleViewModel model,
+        int width)
     {
-        lines.Add(
-            $" Listener  ACTIVE   Console  {(model.ConsoleVisible ? "VISIBLE" : "HIDDEN"),-7} " +
-            $"Pipeline  {FormatPipeline(model.Pipeline),-24} " +
-            $"Benchmark  {(model.BenchmarkInProgress ? "RUNNING" : "IDLE")}");
+        lines.Add(FieldRow(
+            width,
+            new FieldCell("Runtime", "ACTIVE", ConsoleColor.Green),
+            new FieldCell(
+                "Console",
+                model.ConsoleVisible ? "VISIBLE" : "HIDDEN",
+                model.ConsoleVisible ? ConsoleColor.Green : ConsoleColor.DarkGray),
+            new FieldCell(
+                "Pipeline",
+                FormatPipeline(model.Pipeline),
+                PipelineColor(model.Pipeline))));
 
-        var backendFallback = model.BackendSelection.IsFallback ? " · FALLBACK" : string.Empty;
-        lines.Add(
-            $" Backend   {model.BackendSelection.ActiveName} · " +
-            $"mode {FormatBackendMode(model.Settings.CaptureBackend)}{backendFallback}");
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Backend",
+                model.BackendSelection.ActiveName,
+                BackendColor(model.BackendSelection.ActiveKind)),
+            new FieldCell(
+                "Requested",
+                FormatBackendModeToken(model.Settings.CaptureBackend),
+                ConsoleColor.DarkCyan),
+            new FieldCell(
+                "Benchmark",
+                model.BenchmarkInProgress ? "RUNNING" : "IDLE",
+                model.BenchmarkInProgress ? ConsoleColor.Cyan : ConsoleColor.DarkGray)));
 
-        lines.Add(
-            $" Displays  {model.Topology.MonitorCount} · {model.Topology.DpiMode} · " +
-            $"{(model.Topology.IsRemoteSession ? "REMOTE" : "LOCAL")}   " +
-            $"Desktop  {model.Topology.VirtualBounds.Width}×{model.Topology.VirtualBounds.Height} " +
-            $"@ ({model.Topology.VirtualBounds.X},{model.Topology.VirtualBounds.Y}) · " +
-            $"topology v{model.Topology.Version}");
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Displays",
+                model.Topology.MonitorCount.ToString(),
+                ConsoleColor.Gray),
+            new FieldCell("DPI", model.Topology.DpiMode, ConsoleColor.Gray),
+            new FieldCell(
+                "Session",
+                model.Topology.IsRemoteSession ? "REMOTE" : "LOCAL",
+                model.Topology.IsRemoteSession ? ConsoleColor.Yellow : ConsoleColor.DarkGray)));
+
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Desktop",
+                $"{model.Topology.VirtualBounds.Width}×{model.Topology.VirtualBounds.Height}",
+                ConsoleColor.Gray),
+            new FieldCell(
+                "Origin",
+                $"{model.Topology.VirtualBounds.X},{model.Topology.VirtualBounds.Y}",
+                ConsoleColor.Gray),
+            new FieldCell(
+                "Topology",
+                $"v{model.Topology.Version}",
+                ConsoleColor.Gray)));
+
+        if (model.BackendSelection.IsFallback)
+        {
+            lines.Add(FieldRow(
+                width,
+                new FieldCell("Fallback", "YES", ConsoleColor.Yellow),
+                new FieldCell(
+                    "Reason",
+                    model.BackendSelection.FallbackReason ?? "Native backend unavailable",
+                    ConsoleColor.Yellow)));
+        }
     }
 
     private void AddPageContent(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
-        int width)
+        int width,
+        int height)
     {
         switch (_currentPage)
         {
             case ConsolePage.Dashboard:
-                AddDashboard(lines, model);
+                AddDashboard(lines, model, width, height);
                 break;
             case ConsolePage.CaptureSettings:
-                AddCaptureSettings(lines, model);
+                AddCaptureSettings(lines, model, width);
                 break;
             case ConsolePage.Hotkeys:
-                AddHotkeys(lines, model);
+                AddHotkeys(lines, model, width);
                 break;
             case ConsolePage.SaveLocations:
                 AddSaveLocations(lines, model, width);
@@ -255,7 +322,7 @@ internal sealed class ConsoleUi
                 AddBackground(lines, model, width);
                 break;
             case ConsolePage.About:
-                AddAbout(lines, model);
+                AddAbout(lines, model, width);
                 break;
             default:
                 throw new ArgumentOutOfRangeException();
@@ -263,122 +330,231 @@ internal sealed class ConsoleUi
     }
 
     private void AddDashboard(
-        ICollection<string> lines,
-        ConsoleViewModel model)
+        ICollection<StyledConsoleLine> lines,
+        ConsoleViewModel model,
+        int width,
+        int height)
     {
-        lines.Add($" Full capture   {HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)}");
-        lines.Add($" Region capture {HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)}");
-        lines.Add($" Console        {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
-        lines.Add($" Exit           {HotkeyBindingService.Format(model.Settings.ExitHotkey)}");
-        lines.Add(string.Empty);
+        lines.Add(SectionLine("LAST CAPTURE"));
 
         if (model.LastCapture is null)
         {
-            lines.Add(" Last capture   No capture has completed in this session.");
+            lines.Add(FieldRow(
+                width,
+                new FieldCell("State", "NONE", ConsoleColor.DarkGray)));
         }
         else
         {
             var last = model.LastCapture;
-            var kind = last.Kind == CaptureKind.Region ? "REGION" : "FULL";
-            lines.Add(
-                $" Last capture   {kind} · {last.Width}×{last.Height} · " +
-                $"{FormatBytes(last.FileSizeBytes)} · {last.Metrics.TotalMilliseconds:0.0} ms · " +
-                last.BackendName);
-            lines.Add($"                {last.FilePath}");
+            lines.Add(FieldRow(
+                width,
+                new FieldCell(
+                    "Kind",
+                    last.Kind == CaptureKind.Region ? "REGION" : "FULL",
+                    ConsoleColor.Cyan),
+                new FieldCell(
+                    "Dimensions",
+                    $"{last.Width}×{last.Height}",
+                    ConsoleColor.Gray),
+                new FieldCell(
+                    "Size",
+                    FormatBytes(last.FileSizeBytes),
+                    ConsoleColor.Gray)));
+
+            lines.Add(FieldRow(
+                width,
+                new FieldCell(
+                    "Backend",
+                    last.BackendName,
+                    BackendColor(last.BackendKind)),
+                new FieldCell(
+                    "Total",
+                    $"{last.Metrics.TotalMilliseconds:0.0} ms",
+                    ConsoleColor.Green),
+                new FieldCell(
+                    "PNG",
+                    $"{last.Metrics.PngPersistenceMilliseconds:0.0} ms",
+                    ConsoleColor.Gray)));
+
+            lines.Add(LabelValueLine(
+                "File",
+                TruncateMiddle(last.FilePath, Math.Max(8, width - 13)),
+                ConsoleColor.DarkGray));
 
             if (last.Warnings is { Count: > 0 })
             {
-                lines.Add(
-                    $" Capture note  {last.Warnings.Count} warning(s); see Status or diagnostics.");
+                lines.Add(LabelValueLine(
+                    "Warnings",
+                    last.Warnings.Count.ToString(),
+                    ConsoleColor.Yellow));
             }
         }
 
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(Blank());
+        lines.Add(SectionLine("COMMANDS"));
+        AddMenu(lines, model, width);
+
+        if (height >= 32 && model.Events.Count > 0)
+        {
+            lines.Add(Blank());
+            lines.Add(SectionLine("EVENTS"));
+
+            foreach (var eventItem in model.Events
+                         .Reverse()
+                         .Take(3))
+            {
+                lines.Add(EventLine(eventItem, width));
+            }
+        }
     }
 
     private void AddCaptureSettings(
-        ICollection<string> lines,
-        ConsoleViewModel model)
+        ICollection<StyledConsoleLine> lines,
+        ConsoleViewModel model,
+        int width)
     {
-        lines.Add($" Clipboard copy  {OnOff(model.Settings.CopyToClipboard)}");
-        lines.Add($" Capture sound   {OnOff(model.Settings.PlayCaptureSound)}");
-        lines.Add($" Backend mode    {FormatBackendMode(model.Settings.CaptureBackend)}");
-        lines.Add($" Active backend  {model.BackendSelection.ActiveName}");
+        lines.Add(SectionLine("SETTINGS"));
+        AddMenu(lines, model, width);
+        lines.Add(Blank());
+        lines.Add(SectionLine("EFFECTIVE"));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Backend",
+                model.BackendSelection.ActiveName,
+                BackendColor(model.BackendSelection.ActiveKind)),
+            new FieldCell(
+                "Fallback",
+                model.BackendSelection.IsFallback ? "YES" : "NO",
+                model.BackendSelection.IsFallback
+                    ? ConsoleColor.Yellow
+                    : ConsoleColor.DarkGray)));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell("Format", "PNG", ConsoleColor.Gray),
+            new FieldCell("Pixels", "PHYSICAL", ConsoleColor.Gray),
+            new FieldCell("Encoding", "LOSSLESS", ConsoleColor.Gray)));
+
         if (model.BackendSelection.IsFallback)
         {
-            lines.Add(" Fallback reason " + (model.BackendSelection.FallbackReason ?? "Unavailable native backend"));
+            lines.Add(LabelValueLine(
+                "Reason",
+                TruncateMiddle(
+                    model.BackendSelection.FallbackReason ?? "Native backend unavailable",
+                    Math.Max(8, width - 13)),
+                ConsoleColor.Yellow));
         }
-        lines.Add(" Image format    PNG · lossless · original physical pixels");
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
     }
 
     private void AddHotkeys(
-        ICollection<string> lines,
-        ConsoleViewModel model)
+        ICollection<StyledConsoleLine> lines,
+        ConsoleViewModel model,
+        int width)
     {
-        lines.Add(
-            $" Full capture    {HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)}");
-        lines.Add(
-            $" Region capture  {HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)}");
-        lines.Add(
-            $" Exit            {HotkeyBindingService.Format(model.Settings.ExitHotkey)}");
-        lines.Add(
-            $" Toggle console  {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
-        lines.Add(string.Empty);
-        lines.Add(" Enter combinations as text, for example Ctrl+Alt+G or Win+Shift+S.");
-        lines.Add(" SCapturer validates duplicates and asks Windows to reserve the new binding.");
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(SectionLine("REGISTERED HOTKEYS"));
+        AddMenu(lines, model, width);
+        lines.Add(Blank());
+        lines.Add(Plain(
+            "Enter edits the selected binding. SCapturer validates duplicates and Windows registration.",
+            ConsoleColor.DarkGray));
     }
 
     private void AddSaveLocations(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
         int width)
     {
-        lines.Add(" Full captures");
-        lines.Add("   " + Truncate(model.Settings.FullCaptureFolder, width - 4));
-        lines.Add(" Region captures");
-        lines.Add("   " + Truncate(model.Settings.SnipCaptureFolder, width - 4));
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(SectionLine("CURRENT PATHS"));
+        lines.Add(LabelValueLine(
+            "Full",
+            TruncateMiddle(model.Settings.FullCaptureFolder, Math.Max(8, width - 13)),
+            ConsoleColor.DarkGray));
+        lines.Add(LabelValueLine(
+            "Region",
+            TruncateMiddle(model.Settings.SnipCaptureFolder, Math.Max(8, width - 13)),
+            ConsoleColor.DarkGray));
+        lines.Add(Blank());
+        lines.Add(SectionLine("ACTIONS"));
+        AddMenu(lines, model, width);
     }
 
     private void AddDiagnostics(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
         int width)
     {
-        lines.Add($" Capture diagnostics  {OnOff(model.Settings.EnableDiagnostics)}");
-        lines.Add(" Metrics");
-        lines.Add("   " + Truncate(_paths.CaptureMetricsFile, width - 4));
-        lines.Add(" Benchmark reports");
-        lines.Add("   " + Truncate(_paths.BenchmarkReportsDirectory, width - 4));
-        lines.Add(" Comparison gate  native needs ≥20% p95 or allocation improvement without >5% median regression");
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(SectionLine("STATE"));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Diagnostics",
+                OnOff(model.Settings.EnableDiagnostics),
+                model.Settings.EnableDiagnostics ? ConsoleColor.Green : ConsoleColor.DarkGray),
+            new FieldCell(
+                "Benchmark",
+                model.BenchmarkInProgress ? "RUNNING" : "IDLE",
+                model.BenchmarkInProgress ? ConsoleColor.Cyan : ConsoleColor.DarkGray),
+            new FieldCell(
+                "Pipeline",
+                FormatPipeline(model.Pipeline),
+                PipelineColor(model.Pipeline))));
+
+        lines.Add(LabelValueLine(
+            "Metrics",
+            TruncateMiddle(_paths.CaptureMetricsFile, Math.Max(8, width - 13)),
+            ConsoleColor.DarkGray));
+        lines.Add(LabelValueLine(
+            "Reports",
+            TruncateMiddle(_paths.BenchmarkReportsDirectory, Math.Max(8, width - 13)),
+            ConsoleColor.DarkGray));
+        lines.Add(Plain(
+            "Gate       ≥20% p95 or allocation improvement; native median regression must stay ≤5%.",
+            ConsoleColor.DarkGray));
+        lines.Add(Blank());
+        lines.Add(SectionLine("ACTIONS"));
+        AddMenu(lines, model, width);
     }
 
     private void AddRecentCaptures(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
         int width)
     {
+        lines.Add(SectionLine("CAPTURES"));
+
         if (model.RecentCaptures.Count == 0)
         {
-            lines.Add(" No PNG captures were found in the configured folders.");
-            lines.Add(string.Empty);
+            lines.Add(Plain(
+                "No PNG captures were found in the configured folders.",
+                ConsoleColor.DarkGray));
+        }
+        else
+        {
+            lines.Add(Plain(
+                "    TIME       KIND     SIZE       FILE",
+                ConsoleColor.DarkGray));
         }
 
         AddMenu(lines, model, width);
-        lines.Add(string.Empty);
-        lines.Add(" Enter opens the selected file · F opens its folder · R refreshes");
+
+        var selectedRecent = GetSelectedRecent(model);
+        if (selectedRecent is not null)
+        {
+            lines.Add(Blank());
+            lines.Add(SectionLine("SELECTED"));
+            lines.Add(LabelValueLine(
+                "Path",
+                TruncateMiddle(selectedRecent.FilePath, Math.Max(8, width - 13)),
+                ConsoleColor.DarkGray));
+            lines.Add(LabelValueLine(
+                "Modified",
+                selectedRecent.LastWriteTime.ToLocalTime().ToString("yyyy-MM-dd HH:mm:ss"),
+                ConsoleColor.Gray));
+        }
     }
 
     private void AddBackground(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
         int width)
     {
@@ -388,50 +564,99 @@ internal sealed class ConsoleUi
                 ? model.Autostart.IsCurrent ? "ENABLED" : "STALE"
                 : "DISABLED";
 
-        lines.Add($" Console state   {(model.ConsoleVisible ? "VISIBLE" : "HIDDEN")}");
-        lines.Add($" Launch mode     {(model.StartedInBackground ? "BACKGROUND" : "INTERACTIVE")}");
-        lines.Add($" Console hotkey  {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
-        lines.Add(" Close button    BACKGROUND HANDOFF");
-        lines.Add($" Windows startup {startupState}");
-        lines.Add(" Startup command");
-        lines.Add("   " + Truncate(model.Autostart.ExpectedCommand, width - 4));
+        lines.Add(SectionLine("STATE"));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Console",
+                model.ConsoleVisible ? "VISIBLE" : "HIDDEN",
+                model.ConsoleVisible ? ConsoleColor.Green : ConsoleColor.DarkGray),
+            new FieldCell(
+                "Launch",
+                model.StartedInBackground ? "BACKGROUND" : "INTERACTIVE",
+                model.StartedInBackground ? ConsoleColor.Cyan : ConsoleColor.Gray),
+            new FieldCell(
+                "Autostart",
+                startupState,
+                StateColor(startupState))));
+
+        lines.Add(FieldRow(
+            width,
+            new FieldCell(
+                "Close X",
+                "BACKGROUND HANDOFF",
+                ConsoleColor.Cyan),
+            new FieldCell(
+                "Hotkey",
+                HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey),
+                ConsoleColor.DarkCyan)));
+
+        lines.Add(LabelValueLine(
+            "Command",
+            TruncateMiddle(model.Autostart.ExpectedCommand, Math.Max(8, width - 13)),
+            ConsoleColor.DarkGray));
 
         if (!string.IsNullOrWhiteSpace(model.Autostart.ErrorMessage))
         {
-            lines.Add(" Startup error   " + Truncate(model.Autostart.ErrorMessage!, width - 18));
+            lines.Add(LabelValueLine(
+                "Error",
+                TruncateMiddle(model.Autostart.ErrorMessage!, Math.Max(8, width - 13)),
+                ConsoleColor.Red));
         }
         else if (model.Autostart.IsEnabled && !model.Autostart.IsCurrent)
         {
-            lines.Add(" Startup note    Existing registration points to another build or path.");
+            lines.Add(LabelValueLine(
+                "Note",
+                "Registration points to another build or executable path.",
+                ConsoleColor.Yellow));
         }
 
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(Blank());
+        lines.Add(SectionLine("ACTIONS"));
+        AddMenu(lines, model, width);
     }
 
     private void AddAbout(
-        ICollection<string> lines,
-        ConsoleViewModel model)
+        ICollection<StyledConsoleLine> lines,
+        ConsoleViewModel model,
+        int width)
     {
-        lines.Add(" SCapturer");
-        lines.Add(" Performance-first Windows screenshot utility.");
-        lines.Add(string.Empty);
-        lines.Add(" Runtime     .NET 8 · Windows 10 2004+ / Windows 11");
-        lines.Add(" Capture     reference GDI+ and native GDI + WIC backends");
-        lines.Add(" Storage     atomic PNG commit · independent clipboard dispatcher");
-        lines.Add(" Geometry    Per-Monitor V2 · physical virtual-desktop coordinates");
-        lines.Add(" Interface   interactive console UI with differential rendering");
-        lines.Add(" Lifecycle   background mode · single-instance IPC · user autostart");
-        lines.Add(string.Empty);
-        lines.Add(" Part of X-LAB.");
-        lines.Add(string.Empty);
-        AddMenu(lines, model);
+        lines.Add(SectionLine("SCAPTURER"));
+        lines.Add(FieldRow(
+            width,
+            new FieldCell("Author", "XCON", ConsoleColor.Cyan),
+            new FieldCell("Project", "X-LAB", ConsoleColor.DarkCyan),
+            new FieldCell("Runtime", ".NET 8", ConsoleColor.Gray)));
+        lines.Add(Blank());
+        lines.Add(LabelValueLine(
+            "Purpose",
+            "Performance-first Windows screenshot developer utility.",
+            ConsoleColor.Gray));
+        lines.Add(LabelValueLine(
+            "Capture",
+            "Reference GDI+ and native GDI + WIC backends.",
+            ConsoleColor.Gray));
+        lines.Add(LabelValueLine(
+            "Storage",
+            "Atomic PNG commit and isolated clipboard dispatcher.",
+            ConsoleColor.Gray));
+        lines.Add(LabelValueLine(
+            "Geometry",
+            "Per-Monitor V2 physical virtual-desktop coordinates.",
+            ConsoleColor.Gray));
+        lines.Add(LabelValueLine(
+            "Lifecycle",
+            "Background mode, single-instance IPC and user autostart.",
+            ConsoleColor.Gray));
+        lines.Add(Blank());
+        lines.Add(SectionLine("NAVIGATION"));
+        AddMenu(lines, model, width);
     }
 
     private void AddMenu(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
-        int availableWidth = 0)
+        int width)
     {
         var entries = BuildMenuEntries(model);
         ClampSelection(entries);
@@ -439,42 +664,95 @@ internal sealed class ConsoleUi
 
         for (var index = 0; index < entries.Count; index++)
         {
-            var entry = entries[index];
-            var marker = index == selected ? ">" : " ";
-            var number = index switch
-            {
-                < 9 => $"{index + 1}. ",
-                9 => "0. ",
-                _ => "   ",
-            };
-            var text = $"{marker} {number}{entry.Label}";
-
-            if (availableWidth > 0)
-            {
-                text = Truncate(text, availableWidth);
-            }
-
-            lines.Add(text);
+            lines.Add(MenuLine(
+                entries[index],
+                index,
+                index == selected,
+                width));
         }
     }
 
+    private static StyledConsoleLine MenuLine(
+        MenuEntry entry,
+        int index,
+        bool selected,
+        int width)
+    {
+        var marker = selected ? "›" : " ";
+        var number = index switch
+        {
+            < 9 => $"{index + 1}.",
+            9 => "0.",
+            _ => "  ",
+        };
+        var prefix = $"{marker} {number} ";
+        var right = entry.RightText ?? string.Empty;
+        var rightReserve = string.IsNullOrEmpty(right) ? 0 : right.Length + 2;
+        var labelWidth = Math.Max(1, width - prefix.Length - rightReserve);
+        var label = Truncate(entry.Label, labelWidth).PadRight(labelWidth);
+        var background = selected ? ConsoleColor.DarkGray : ConsoleColor.Black;
+
+        var spans = new List<StyledConsoleSpan>
+        {
+            new(
+                prefix,
+                selected ? ConsoleColor.Cyan : ConsoleColor.DarkGray,
+                background),
+            new(
+                label,
+                selected
+                    ? ConsoleColor.White
+                    : entry.IsDisabled ? ConsoleColor.DarkGray : ConsoleColor.Gray,
+                background),
+        };
+
+        if (!string.IsNullOrEmpty(right))
+        {
+            spans.Add(new StyledConsoleSpan(
+                "  " + right,
+                selected
+                    ? ConsoleColor.White
+                    : entry.RightColor,
+                background));
+        }
+
+        var currentLength = spans.Sum(span => span.Text.Length);
+        if (currentLength < width)
+        {
+            spans.Add(new StyledConsoleSpan(
+                new string(' ', width - currentLength),
+                ConsoleColor.Gray,
+                background));
+        }
+
+        return StyledConsoleLine.Create(spans);
+    }
+
     private void AddFooter(
-        ICollection<string> lines,
+        ICollection<StyledConsoleLine> lines,
         ConsoleViewModel model,
         int width)
     {
-        foreach (var statusLine in Wrap(
-                     " Status: " + model.StatusMessage,
-                     Math.Max(20, width - 1),
-                     maximumLines: 2))
-        {
-            lines.Add(statusLine);
-        }
+        var statusLevel = LastStatusLevel(model);
+        var statusText = Truncate(model.StatusMessage, Math.Max(8, width - 7));
+        lines.Add(StatusLine(statusText, statusLevel));
+        lines.Add(Plain(FooterNavigation(model), ConsoleColor.DarkGray));
+    }
 
-        lines.Add(
-            _currentPage == ConsolePage.Dashboard
-                ? " ↑/↓ select · Enter activate · 1-9/0 shortcuts"
-                : " ↑/↓ select · Enter activate · Esc back · 1-9/0 shortcuts");
+    private string FooterNavigation(ConsoleViewModel model)
+    {
+        return _currentPage switch
+        {
+            ConsolePage.Dashboard =>
+                $"↑↓ Select   Enter Execute   1–9/0 Direct   " +
+                $"{HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)} Hide",
+            ConsolePage.RecentCaptures =>
+                "↑↓ Select   Enter Open   F Folder   R Refresh   Esc Back",
+            ConsolePage.Hotkeys =>
+                "↑↓ Select   Enter Edit   Esc Back",
+            _ =>
+                "↑↓ Select   Enter Execute   Esc Back   1–9/0 Direct",
+        };
     }
 
     private IReadOnlyList<MenuEntry> BuildMenuEntries(ConsoleViewModel model)
@@ -483,8 +761,14 @@ internal sealed class ConsoleUi
         {
             ConsolePage.Dashboard =>
             [
-                Entry("Capture full desktop", ConsoleAction.CaptureFull),
-                Entry("Capture selected region", ConsoleAction.CaptureRegion),
+                Entry(
+                    "Capture full desktop",
+                    ConsoleAction.CaptureFull,
+                    HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)),
+                Entry(
+                    "Capture selected region",
+                    ConsoleAction.CaptureRegion,
+                    HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)),
                 Entry("Capture settings", ConsoleAction.OpenCaptureSettings),
                 Entry("Hotkeys", ConsoleAction.OpenHotkeys),
                 Entry("Save locations", ConsoleAction.OpenSaveLocations),
@@ -498,31 +782,41 @@ internal sealed class ConsoleUi
             ConsolePage.CaptureSettings =>
             [
                 Entry(
-                    $"Toggle clipboard copy · currently {OnOff(model.Settings.CopyToClipboard)}",
-                    ConsoleAction.ToggleClipboard),
+                    "Copy to clipboard",
+                    ConsoleAction.ToggleClipboard,
+                    OnOff(model.Settings.CopyToClipboard),
+                    StateColor(OnOff(model.Settings.CopyToClipboard))),
                 Entry(
-                    $"Toggle capture sound · currently {OnOff(model.Settings.PlayCaptureSound)}",
-                    ConsoleAction.ToggleSound),
+                    "Capture sound",
+                    ConsoleAction.ToggleSound,
+                    OnOff(model.Settings.PlayCaptureSound),
+                    StateColor(OnOff(model.Settings.PlayCaptureSound))),
                 Entry(
-                    $"Cycle capture backend · {FormatBackendMode(model.Settings.CaptureBackend)}",
-                    ConsoleAction.CycleCaptureBackend),
+                    "Requested backend",
+                    ConsoleAction.CycleCaptureBackend,
+                    FormatBackendModeToken(model.Settings.CaptureBackend),
+                    ConsoleColor.DarkCyan),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
 
             ConsolePage.Hotkeys =>
             [
                 Entry(
-                    $"Edit full capture · {HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)}",
-                    ConsoleAction.EditFullHotkey),
+                    "Full capture",
+                    ConsoleAction.EditFullHotkey,
+                    HotkeyBindingService.Format(model.Settings.FullCaptureHotkey)),
                 Entry(
-                    $"Edit region capture · {HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)}",
-                    ConsoleAction.EditRegionHotkey),
+                    "Region capture",
+                    ConsoleAction.EditRegionHotkey,
+                    HotkeyBindingService.Format(model.Settings.RegionCaptureHotkey)),
                 Entry(
-                    $"Edit exit · {HotkeyBindingService.Format(model.Settings.ExitHotkey)}",
-                    ConsoleAction.EditExitHotkey),
+                    "Toggle console",
+                    ConsoleAction.EditToggleConsoleHotkey,
+                    HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)),
                 Entry(
-                    $"Edit toggle console · {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}",
-                    ConsoleAction.EditToggleConsoleHotkey),
+                    "Exit",
+                    ConsoleAction.EditExitHotkey,
+                    HotkeyBindingService.Format(model.Settings.ExitHotkey)),
                 Entry("Restore default hotkeys", ConsoleAction.RestoreDefaultHotkeys),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
@@ -539,22 +833,26 @@ internal sealed class ConsoleUi
             ConsolePage.Diagnostics =>
             [
                 Entry(
-                    $"Toggle diagnostics · currently {OnOff(model.Settings.EnableDiagnostics)}",
-                    ConsoleAction.ToggleDiagnostics),
+                    "Capture diagnostics",
+                    ConsoleAction.ToggleDiagnostics,
+                    OnOff(model.Settings.EnableDiagnostics),
+                    StateColor(OnOff(model.Settings.EnableDiagnostics))),
                 Entry(
                     model.BenchmarkInProgress
-                        ? "A benchmark is running"
+                        ? "Selected-backend benchmark running"
                         : "Run selected-backend baseline benchmark",
                     model.BenchmarkInProgress
                         ? ConsoleAction.None
-                        : ConsoleAction.RunBenchmark),
+                        : ConsoleAction.RunBenchmark,
+                    isDisabled: model.BenchmarkInProgress),
                 Entry(
                     model.BenchmarkInProgress
                         ? "Backend comparison unavailable while benchmark runs"
                         : "Compare Reference GDI+ vs Native GDI + WIC",
                     model.BenchmarkInProgress
                         ? ConsoleAction.None
-                        : ConsoleAction.RunBackendComparison),
+                        : ConsoleAction.RunBackendComparison,
+                    isDisabled: model.BenchmarkInProgress),
                 Entry("Open diagnostics folder", ConsoleAction.OpenDiagnosticsFolder),
                 Entry("Back to dashboard", ConsoleAction.Back),
             ],
@@ -593,8 +891,8 @@ internal sealed class ConsoleUi
             var item = model.RecentCaptures[index];
             var kind = item.Kind == CaptureKind.Region ? "REGION" : "FULL";
             entries.Add(new MenuEntry(
-                $"{item.LastWriteTime.ToLocalTime():yyyy-MM-dd HH:mm:ss} · " +
-                $"{kind,-6} · {FormatBytes(item.FileSizeBytes),8} · {item.FileName}",
+                $"{item.LastWriteTime.ToLocalTime():HH:mm:ss}   {kind,-7} " +
+                $"{FormatBytes(item.FileSizeBytes),9}   {item.FileName}",
                 new ConsoleCommand(ConsoleAction.OpenRecentCapture, index),
                 RecentIndex: index));
         }
@@ -602,6 +900,21 @@ internal sealed class ConsoleUi
         entries.Add(Entry("Refresh recent captures", ConsoleAction.RefreshRecentCaptures));
         entries.Add(Entry("Back to dashboard", ConsoleAction.Back));
         return entries;
+    }
+
+    private RecentCaptureItem? GetSelectedRecent(ConsoleViewModel model)
+    {
+        var entries = BuildMenuEntries(model);
+        if (entries.Count == 0)
+        {
+            return null;
+        }
+
+        ClampSelection(entries);
+        var recentIndex = entries[GetSelection()].RecentIndex;
+        return recentIndex >= 0 && recentIndex < model.RecentCaptures.Count
+            ? model.RecentCaptures[recentIndex]
+            : null;
     }
 
     private ConsoleCommand GetSelectedCommand(IReadOnlyList<MenuEntry> entries)
@@ -673,7 +986,7 @@ internal sealed class ConsoleUi
             : 0;
     }
 
-    private void RenderDiff(IReadOnlyList<string> sourceLines)
+    private void RenderDiff(IReadOnlyList<StyledConsoleLine> sourceLines)
     {
         var width = SafeWindowWidth();
         var height = SafeWindowHeight();
@@ -681,8 +994,7 @@ internal sealed class ConsoleUi
 
         var normalized = sourceLines
             .Take(height)
-            .Select(line => FitLine(line, contentWidth))
-            .Select((line, index) => StyleLine(line, index))
+            .Select(line => FitStyledLine(line, contentWidth))
             .ToArray();
 
         var sizeChanged =
@@ -709,10 +1021,7 @@ internal sealed class ConsoleUi
             {
                 var next = index < normalized.Length
                     ? normalized[index]
-                    : StyledConsoleLine.CreatePlain(
-                        new string(' ', contentWidth),
-                        ConsoleColor.Gray,
-                        ConsoleColor.Black);
+                    : Plain(new string(' ', contentWidth), ConsoleColor.Gray);
 
                 var previous = index < _lastRenderedLines.Length
                     ? _lastRenderedLines[index]
@@ -775,375 +1084,250 @@ internal sealed class ConsoleUi
         _forceFullRedraw = false;
     }
 
-    private static StyledConsoleLine StyleLine(string text, int lineIndex)
+    private static StyledConsoleLine FitStyledLine(
+        StyledConsoleLine line,
+        int width)
     {
-        var foreground = Enumerable.Repeat(
-            ConsoleColor.Gray,
-            text.Length).ToArray();
-        var background = Enumerable.Repeat(
-            ConsoleColor.Black,
-            text.Length).ToArray();
-        var trimmed = text.Trim();
+        var spans = new List<StyledConsoleSpan>();
+        var remaining = width;
 
-        if (lineIndex == 0)
+        foreach (var span in line.Spans)
         {
-            ApplyStyle(
-                foreground,
-                background,
-                0,
-                text.Length,
-                ConsoleColor.Cyan,
-                ConsoleColor.Black);
+            if (remaining <= 0)
+            {
+                break;
+            }
+
+            var text = span.Text.Length <= remaining
+                ? span.Text
+                : span.Text[..remaining];
+
+            if (text.Length > 0)
+            {
+                spans.Add(span with { Text = text });
+                remaining -= text.Length;
+            }
         }
-        else if (trimmed.Length > 0 && trimmed.All(character => character == '─'))
+
+        if (remaining > 0)
         {
-            ApplyStyle(
-                foreground,
-                background,
-                0,
-                text.Length,
+            spans.Add(new StyledConsoleSpan(
+                new string(' ', remaining),
+                ConsoleColor.Gray,
+                ConsoleColor.Black));
+        }
+
+        return StyledConsoleLine.Create(spans);
+    }
+
+    private static StyledConsoleLine FieldRow(
+        int width,
+        params FieldCell[] fields)
+    {
+        if (fields.Length == 0)
+        {
+            return Blank();
+        }
+
+        const int labelWidth = 11;
+        const int gapWidth = 2;
+        var availableForValues = Math.Max(
+            fields.Length,
+            width - fields.Length * labelWidth - (fields.Length - 1) * gapWidth);
+        var valueWidth = Math.Max(1, availableForValues / fields.Length);
+        var spans = new List<StyledConsoleSpan>(fields.Length * 3);
+
+        for (var index = 0; index < fields.Length; index++)
+        {
+            var field = fields[index];
+            spans.Add(new StyledConsoleSpan(
+                field.Label.PadRight(labelWidth),
                 ConsoleColor.DarkGray,
-                ConsoleColor.Black);
-        }
-        else if (text.TrimStart().StartsWith("> ", StringComparison.Ordinal))
-        {
-            ApplyStyle(
-                foreground,
-                background,
-                0,
-                text.Length,
-                ConsoleColor.White,
-                ConsoleColor.DarkBlue);
-        }
-        else
-        {
-            if (IsNavigationLine(trimmed))
-            {
-                ApplyStyle(
-                    foreground,
-                    background,
-                    0,
-                    text.Length,
-                    ConsoleColor.DarkGray,
-                    ConsoleColor.Black);
-            }
-            else if (IsSectionHeading(trimmed))
-            {
-                ApplyStyle(
-                    foreground,
-                    background,
-                    0,
-                    text.Length,
-                    ConsoleColor.Cyan,
-                    ConsoleColor.Black);
-            }
-            else if (LooksLikePath(trimmed))
-            {
-                ApplyStyle(
-                    foreground,
-                    background,
-                    0,
-                    text.Length,
-                    ConsoleColor.DarkGray,
-                    ConsoleColor.Black);
-            }
+                ConsoleColor.Black));
+            spans.Add(new StyledConsoleSpan(
+                Truncate(field.Value, valueWidth).PadRight(valueWidth),
+                field.ValueColor,
+                ConsoleColor.Black));
 
-            ApplyPrefixStyle(
-                text,
-                foreground,
-                background,
-                " Status:",
-                ConsoleColor.DarkGray);
-
-            ApplySemanticWords(text, foreground, background);
-            ApplyHotkeyStyles(text, foreground, background);
+            if (index < fields.Length - 1)
+            {
+                spans.Add(new StyledConsoleSpan(
+                    new string(' ', gapWidth),
+                    ConsoleColor.Gray,
+                    ConsoleColor.Black));
+            }
         }
+
+        return StyledConsoleLine.Create(spans);
+    }
+
+    private static StyledConsoleLine LabelValueLine(
+        string label,
+        string value,
+        ConsoleColor valueColor)
+    {
+        return StyledConsoleLine.Create(
+        [
+            new StyledConsoleSpan(
+                label.PadRight(11),
+                ConsoleColor.DarkGray,
+                ConsoleColor.Black),
+            new StyledConsoleSpan(
+                value,
+                valueColor,
+                ConsoleColor.Black),
+        ]);
+    }
+
+    private static StyledConsoleLine EventLine(
+        ConsoleEventItem item,
+        int width)
+    {
+        var token = EventToken(item.Level);
+        var time = item.Timestamp.ToLocalTime().ToString("HH:mm:ss");
+        var messageWidth = Math.Max(1, width - 17);
 
         return StyledConsoleLine.Create(
-            text,
-            foreground,
-            background);
+        [
+            new StyledConsoleSpan(
+                time + "  ",
+                ConsoleColor.DarkGray,
+                ConsoleColor.Black),
+            new StyledConsoleSpan(
+                token.PadRight(6),
+                EventColor(item.Level),
+                ConsoleColor.Black),
+            new StyledConsoleSpan(
+                Truncate(item.Message, messageWidth),
+                ConsoleColor.Gray,
+                ConsoleColor.Black),
+        ]);
     }
 
-    private static void ApplySemanticWords(
-        string text,
-        ConsoleColor[] foreground,
-        ConsoleColor[] background)
+    private static StyledConsoleLine StatusLine(
+        string message,
+        ConsoleEventLevel level)
     {
-        ApplyPhraseStyle(
-            text,
-            foreground,
-            background,
-            "Native GDI + WIC",
-            ConsoleColor.Cyan);
-        ApplyPhraseStyle(
-            text,
-            foreground,
-            background,
-            "Reference GDI+",
-            ConsoleColor.DarkCyan);
+        var token = EventToken(level);
+        return StyledConsoleLine.Create(
+        [
+            new StyledConsoleSpan(
+                token.PadRight(6),
+                EventColor(level),
+                ConsoleColor.Black),
+            new StyledConsoleSpan(
+                message,
+                ConsoleColor.Gray,
+                ConsoleColor.Black),
+        ]);
+    }
 
-        foreach (var word in new[]
-                 {
-                     "ACTIVE", "VISIBLE", "ENABLED", "PASS", "COMPLETED",
-                     "SAVED", "ON",
-                 })
-        {
-            ApplyWordStyle(
+    private static StyledConsoleLine CenteredTitleLine(
+        string text,
+        int width)
+    {
+        var truncated = Truncate(text, width);
+        var leftPadding = Math.Max(0, (width - truncated.Length) / 2);
+        return StyledConsoleLine.Create(
+        [
+            new StyledConsoleSpan(
+                new string(' ', leftPadding),
+                ConsoleColor.Cyan,
+                ConsoleColor.Black),
+            new StyledConsoleSpan(
+                truncated,
+                ConsoleColor.Cyan,
+                ConsoleColor.Black),
+        ]);
+    }
+
+    private static StyledConsoleLine SectionLine(string title)
+    {
+        return Plain(title, ConsoleColor.DarkCyan);
+    }
+
+    private static StyledConsoleLine RuleLine(int width)
+    {
+        return Plain(
+            new string('─', Math.Max(1, width)),
+            ConsoleColor.DarkGray);
+    }
+
+    private static StyledConsoleLine Blank()
+    {
+        return Plain(string.Empty, ConsoleColor.Gray);
+    }
+
+    private static StyledConsoleLine Plain(
+        string text,
+        ConsoleColor foreground)
+    {
+        return StyledConsoleLine.Create(
+        [
+            new StyledConsoleSpan(
                 text,
                 foreground,
-                background,
-                word,
-                ConsoleColor.Green);
-        }
-
-        foreach (var word in new[]
-                 {
-                     "RUNNING", "CAPTURING", "SAVING", "PUBLISHING",
-                     "QUEUED", "AUTO", "BACKGROUND", "HANDOFF",
-                 })
-        {
-            ApplyWordStyle(
-                text,
-                foreground,
-                background,
-                word,
-                ConsoleColor.Cyan);
-        }
-
-        foreach (var word in new[]
-                 {
-                     "WARNING", "WARN", "FALLBACK", "STALE", "COALESCED",
-                 })
-        {
-            ApplyWordStyle(
-                text,
-                foreground,
-                background,
-                word,
-                ConsoleColor.Yellow);
-        }
-
-        foreach (var word in new[]
-                 {
-                     "ERROR", "FAILED", "FAIL", "REJECTED",
-                 })
-        {
-            ApplyWordStyle(
-                text,
-                foreground,
-                background,
-                word,
-                ConsoleColor.Red);
-        }
-
-        foreach (var word in new[]
-                 {
-                     "IDLE", "HIDDEN", "DISABLED", "OFF", "LOCAL",
-                 })
-        {
-            ApplyWordStyle(
-                text,
-                foreground,
-                background,
-                word,
-                ConsoleColor.DarkGray);
-        }
+                ConsoleColor.Black),
+        ]);
     }
 
-    private static void ApplyHotkeyStyles(
-        string text,
-        ConsoleColor[] foreground,
-        ConsoleColor[] background)
+    private static ConsoleEventLevel LastStatusLevel(ConsoleViewModel model)
     {
-        var index = 0;
-        while (index < text.Length)
+        return model.Events.Count > 0
+            ? model.Events[^1].Level
+            : ConsoleEventLevel.Info;
+    }
+
+    private static ConsoleColor PipelineColor(CapturePipelineSnapshot pipeline)
+    {
+        return pipeline.State.ToString().Equals("Idle", StringComparison.OrdinalIgnoreCase)
+            ? ConsoleColor.DarkGray
+            : ConsoleColor.Cyan;
+    }
+
+    private static ConsoleColor BackendColor(CaptureBackendKind kind)
+    {
+        return kind == CaptureBackendKind.NativeGdiWic
+            ? ConsoleColor.Cyan
+            : ConsoleColor.DarkCyan;
+    }
+
+    private static ConsoleColor StateColor(string state)
+    {
+        return state.ToUpperInvariant() switch
         {
-            while (index < text.Length && char.IsWhiteSpace(text[index]))
-            {
-                index++;
-            }
-
-            var tokenStart = index;
-            while (index < text.Length && !char.IsWhiteSpace(text[index]))
-            {
-                index++;
-            }
-
-            if (tokenStart == index)
-            {
-                continue;
-            }
-
-            var token = text[tokenStart..index].TrimEnd('.', ',', ';', ':');
-            if (token.Contains('+') &&
-                (token.StartsWith("Ctrl+", StringComparison.OrdinalIgnoreCase) ||
-                 token.StartsWith("Alt+", StringComparison.OrdinalIgnoreCase) ||
-                 token.StartsWith("Shift+", StringComparison.OrdinalIgnoreCase) ||
-                 token.StartsWith("Win+", StringComparison.OrdinalIgnoreCase)))
-            {
-                ApplyStyle(
-                    foreground,
-                    background,
-                    tokenStart,
-                    token.Length,
-                    ConsoleColor.DarkCyan,
-                    ConsoleColor.Black);
-            }
-        }
+            "ACTIVE" or "VISIBLE" or "ENABLED" or "ON" or "PASS" or "YES" =>
+                ConsoleColor.Green,
+            "RUNNING" or "BACKGROUND" or "HANDOFF" or "QUEUED" =>
+                ConsoleColor.Cyan,
+            "WARNING" or "WARN" or "FALLBACK" or "STALE" or "COALESCED" =>
+                ConsoleColor.Yellow,
+            "ERROR" or "FAILED" or "FAIL" or "REJECTED" =>
+                ConsoleColor.Red,
+            _ => ConsoleColor.DarkGray,
+        };
     }
 
-    private static void ApplyPrefixStyle(
-        string text,
-        ConsoleColor[] foreground,
-        ConsoleColor[] background,
-        string prefix,
-        ConsoleColor color)
+    private static string EventToken(ConsoleEventLevel level)
     {
-        if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        return level switch
         {
-            ApplyStyle(
-                foreground,
-                background,
-                0,
-                Math.Min(prefix.Length, text.Length),
-                color,
-                ConsoleColor.Black);
-        }
+            ConsoleEventLevel.Success => "OK",
+            ConsoleEventLevel.Warning => "WARN",
+            ConsoleEventLevel.Error => "ERROR",
+            _ => "INFO",
+        };
     }
 
-    private static void ApplyPhraseStyle(
-        string text,
-        ConsoleColor[] foreground,
-        ConsoleColor[] background,
-        string phrase,
-        ConsoleColor color)
+    private static ConsoleColor EventColor(ConsoleEventLevel level)
     {
-        var searchStart = 0;
-        while (searchStart < text.Length)
+        return level switch
         {
-            var index = text.IndexOf(
-                phrase,
-                searchStart,
-                StringComparison.OrdinalIgnoreCase);
-            if (index < 0)
-            {
-                break;
-            }
-
-            ApplyStyle(
-                foreground,
-                background,
-                index,
-                phrase.Length,
-                color,
-                ConsoleColor.Black);
-            searchStart = index + phrase.Length;
-        }
-    }
-
-    private static void ApplyWordStyle(
-        string text,
-        ConsoleColor[] foreground,
-        ConsoleColor[] background,
-        string word,
-        ConsoleColor color)
-    {
-        var searchStart = 0;
-        while (searchStart < text.Length)
-        {
-            var index = text.IndexOf(
-                word,
-                searchStart,
-                StringComparison.OrdinalIgnoreCase);
-            if (index < 0)
-            {
-                break;
-            }
-
-            var beforeBoundary = index == 0 || !IsWordCharacter(text[index - 1]);
-            var afterIndex = index + word.Length;
-            var afterBoundary = afterIndex >= text.Length ||
-                !IsWordCharacter(text[afterIndex]);
-
-            if (beforeBoundary && afterBoundary)
-            {
-                ApplyStyle(
-                    foreground,
-                    background,
-                    index,
-                    word.Length,
-                    color,
-                    ConsoleColor.Black);
-            }
-
-            searchStart = index + word.Length;
-        }
-    }
-
-    private static bool IsWordCharacter(char character)
-    {
-        return char.IsLetterOrDigit(character) || character == '_';
-    }
-
-    private static void ApplyStyle(
-        ConsoleColor[] foreground,
-        ConsoleColor[] background,
-        int start,
-        int length,
-        ConsoleColor foregroundColor,
-        ConsoleColor backgroundColor)
-    {
-        var end = Math.Min(foreground.Length, Math.Max(start, start + length));
-        for (var index = Math.Max(0, start); index < end; index++)
-        {
-            foreground[index] = foregroundColor;
-            background[index] = backgroundColor;
-        }
-    }
-
-    private static bool IsNavigationLine(string value)
-    {
-        return value.StartsWith("↑/↓", StringComparison.Ordinal) ||
-            value.StartsWith("Enter opens", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsSectionHeading(string value)
-    {
-        if (value.Length is < 3 or > 40)
-        {
-            return false;
-        }
-
-        var containsLetter = false;
-        foreach (var character in value)
-        {
-            if (char.IsLetter(character))
-            {
-                containsLetter = true;
-                if (char.IsLower(character))
-                {
-                    return false;
-                }
-            }
-            else if (!char.IsWhiteSpace(character) &&
-                     character is not '&' and not '/' and not '-')
-            {
-                return false;
-            }
-        }
-
-        return containsLetter;
-    }
-
-    private static bool LooksLikePath(string value)
-    {
-        return value.StartsWith(@"\\", StringComparison.Ordinal) ||
-            value.StartsWith("%", StringComparison.Ordinal) ||
-            (value.Length >= 3 &&
-             char.IsLetter(value[0]) &&
-             value[1] == ':' &&
-             (value[2] == '\\' || value[2] == '/'));
+            ConsoleEventLevel.Success => ConsoleColor.Green,
+            ConsoleEventLevel.Warning => ConsoleColor.Yellow,
+            ConsoleEventLevel.Error => ConsoleColor.Red,
+            _ => ConsoleColor.Cyan,
+        };
     }
 
     private static void WriteStyledLine(StyledConsoleLine line)
@@ -1166,18 +1350,24 @@ internal sealed class ConsoleUi
         }
         catch (IOException)
         {
-            // ReadLine may still work in hosts that do not support cursor control.
+            // ReadLine may still work in hosts without cursor control.
         }
     }
 
     private static MenuEntry Entry(
         string label,
-        ConsoleAction action)
+        ConsoleAction action,
+        string? rightText = null,
+        ConsoleColor rightColor = ConsoleColor.DarkCyan,
+        bool isDisabled = false)
     {
         return new MenuEntry(
             label,
             new ConsoleCommand(action),
-            RecentIndex: -1);
+            RecentIndex: -1,
+            RightText: rightText,
+            RightColor: rightColor,
+            IsDisabled: isDisabled);
     }
 
     private static string PageTitle(ConsolePage page)
@@ -1196,6 +1386,35 @@ internal sealed class ConsoleUi
         };
     }
 
+    private static string WindowPageTitle(ConsolePage page)
+    {
+        return page switch
+        {
+            ConsolePage.Dashboard => "Dashboard",
+            ConsolePage.CaptureSettings => "Capture Settings",
+            ConsolePage.Hotkeys => "Hotkeys",
+            ConsolePage.SaveLocations => "Save Locations",
+            ConsolePage.Diagnostics => "Diagnostics",
+            ConsolePage.RecentCaptures => "Recent Captures",
+            ConsolePage.Background => "Background and Startup",
+            ConsolePage.About => "About",
+            _ => page.ToString(),
+        };
+    }
+
+    private void TrySetWindowTitle()
+    {
+        try
+        {
+            Console.Title = $"SCapturer — {WindowPageTitle(_currentPage)}";
+        }
+        catch (Exception exception)
+            when (exception is IOException or InvalidOperationException)
+        {
+            // Some hosts do not expose a mutable console title.
+        }
+    }
+
     private static string FormatPipeline(CapturePipelineSnapshot pipeline)
     {
         var state = pipeline.State.ToString().ToUpperInvariant();
@@ -1212,7 +1431,7 @@ internal sealed class ConsoleUi
             ? string.Empty
             : " " + FormatKind(pipeline.PendingKind.Value);
 
-        return $"{state}{active} + 1 PENDING{pending}";
+        return $"{state}{active} +1 {pending}".TrimEnd();
     }
 
     private static string FormatKind(CaptureKind kind)
@@ -1220,40 +1439,18 @@ internal sealed class ConsoleUi
         return kind == CaptureKind.Region ? "REGION" : "FULL";
     }
 
-    private static string FormatBackendMode(CaptureBackendMode mode)
+    private static string FormatBackendModeToken(CaptureBackendMode mode)
     {
         return mode switch
         {
-            CaptureBackendMode.Auto => "Auto",
-            CaptureBackendMode.ReferenceGdiPlus => "Reference GDI+",
-            CaptureBackendMode.NativeGdiWic => "Native GDI + WIC",
-            _ => mode.ToString(),
+            CaptureBackendMode.Auto => "AUTO",
+            CaptureBackendMode.ReferenceGdiPlus => "REFERENCE",
+            CaptureBackendMode.NativeGdiWic => "NATIVE",
+            _ => mode.ToString().ToUpperInvariant(),
         };
     }
 
     private static string OnOff(bool value) => value ? "ON" : "OFF";
-
-    private static string Rule(int width)
-    {
-        return new string('─', Math.Max(1, width - 1));
-    }
-
-    private static string CenterTitle(string text, int width)
-    {
-        var available = Math.Max(1, width - 1);
-        if (text.Length >= available)
-        {
-            return Truncate(text, available);
-        }
-
-        return new string(' ', (available - text.Length) / 2) + text;
-    }
-
-    private static string FitLine(string value, int width)
-    {
-        var truncated = Truncate(value, width);
-        return truncated.PadRight(width);
-    }
 
     private static string Truncate(string value, int width)
     {
@@ -1272,46 +1469,26 @@ internal sealed class ConsoleUi
             : value[..(width - 1)] + "…";
     }
 
-    private static IEnumerable<string> Wrap(
-        string value,
-        int width,
-        int maximumLines)
+    private static string TruncateMiddle(string value, int width)
     {
-        if (string.IsNullOrEmpty(value))
+        if (width <= 0)
         {
-            yield return string.Empty;
-            yield break;
+            return string.Empty;
         }
 
-        var remaining = value;
-
-        for (var lineIndex = 0;
-             lineIndex < maximumLines && remaining.Length > 0;
-             lineIndex++)
+        if (value.Length <= width)
         {
-            if (remaining.Length <= width)
-            {
-                yield return remaining;
-                yield break;
-            }
-
-            var split = remaining.LastIndexOf(' ', width - 1);
-            if (split <= 0)
-            {
-                split = width;
-            }
-
-            var line = remaining[..split].TrimEnd();
-            remaining = remaining[split..].TrimStart();
-
-            if (lineIndex == maximumLines - 1 && remaining.Length > 0)
-            {
-                yield return Truncate(line + " " + remaining, width);
-                yield break;
-            }
-
-            yield return line;
+            return value;
         }
+
+        if (width <= 3)
+        {
+            return Truncate(value, width);
+        }
+
+        var rightLength = Math.Max(1, (width - 1) / 2);
+        var leftLength = width - rightLength - 1;
+        return value[..leftLength] + "…" + value[^rightLength..];
     }
 
     private static string FormatBytes(long bytes)
@@ -1368,7 +1545,15 @@ internal sealed class ConsoleUi
     private sealed record MenuEntry(
         string Label,
         ConsoleCommand Command,
-        int RecentIndex);
+        int RecentIndex,
+        string? RightText = null,
+        ConsoleColor RightColor = ConsoleColor.DarkCyan,
+        bool IsDisabled = false);
+
+    private sealed record FieldCell(
+        string Label,
+        string Value,
+        ConsoleColor ValueColor);
 
     private sealed record StyledConsoleSpan(
         string Text,
@@ -1380,69 +1565,16 @@ internal sealed class ConsoleUi
         IReadOnlyList<StyledConsoleSpan> Spans,
         string Signature)
     {
-        public static StyledConsoleLine CreatePlain(
-            string text,
-            ConsoleColor foreground,
-            ConsoleColor background)
-        {
-            return new StyledConsoleLine(
-                text,
-                [new StyledConsoleSpan(text, foreground, background)],
-                $"{text}\u001f{(int)foreground}:{(int)background}");
-        }
-
         public static StyledConsoleLine Create(
-            string text,
-            IReadOnlyList<ConsoleColor> foreground,
-            IReadOnlyList<ConsoleColor> background)
+            IReadOnlyList<StyledConsoleSpan> spans)
         {
-            if (text.Length == 0)
-            {
-                return CreatePlain(
-                    string.Empty,
-                    ConsoleColor.Gray,
-                    ConsoleColor.Black);
-            }
+            var text = string.Concat(spans.Select(span => span.Text));
+            var signature = string.Join(
+                "\u001e",
+                spans.Select(span =>
+                    $"{span.Text}\u001f{(int)span.Foreground}:{(int)span.Background}"));
 
-            var spans = new List<StyledConsoleSpan>();
-            var signature = new System.Text.StringBuilder(text.Length + 64);
-            signature.Append(text).Append('\u001f');
-            var spanStart = 0;
-
-            for (var index = 1; index <= text.Length; index++)
-            {
-                var boundary = index == text.Length ||
-                    foreground[index] != foreground[spanStart] ||
-                    background[index] != background[spanStart];
-
-                if (!boundary)
-                {
-                    continue;
-                }
-
-                var spanText = text[spanStart..index];
-                var spanForeground = foreground[spanStart];
-                var spanBackground = background[spanStart];
-                spans.Add(new StyledConsoleSpan(
-                    spanText,
-                    spanForeground,
-                    spanBackground));
-                signature
-                    .Append(spanStart)
-                    .Append(':')
-                    .Append(index - spanStart)
-                    .Append(':')
-                    .Append((int)spanForeground)
-                    .Append(':')
-                    .Append((int)spanBackground)
-                    .Append(';');
-                spanStart = index;
-            }
-
-            return new StyledConsoleLine(
-                text,
-                spans,
-                signature.ToString());
+            return new StyledConsoleLine(text, spans, signature);
         }
     }
 }

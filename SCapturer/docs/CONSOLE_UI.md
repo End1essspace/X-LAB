@@ -15,8 +15,9 @@ Provides:
 - current listener and capture-pipeline state;
 - benchmark state;
 - display topology;
-- active hotkeys;
-- last-capture summary;
+- fixed-column runtime, backend, display, and pipeline telemetry;
+- structured last-capture metrics;
+- a bounded session event feed;
 - access to every management page;
 - full and region capture commands;
 - process exit.
@@ -101,7 +102,7 @@ Provides:
 
 ### About
 
-Displays the current runtime, capture, storage, geometry, interface, and lifecycle boundaries.
+Displays the current runtime, capture, storage, geometry, interface, and lifecycle boundaries, and identifies **XCON** as the author under **X-LAB**.
 
 ## Navigation
 
@@ -114,22 +115,22 @@ Global console controls:
 - `1`–`9` and `0` — activate a visible menu item directly;
 - `Esc` / `Backspace` — return to Dashboard.
 
-Selection is retained independently for each page.
+Selection is retained independently for each page. The native console title follows the active page, for example `SCapturer — Diagnostics`.
 
 
 ## Semantic color rendering
 
-The renderer stores text and style spans as one differential frame. A line is redrawn when either its text or its style signature changes. Colors are deliberately semantic:
+The renderer stores text and style spans as one differential frame. A line is redrawn when either its text or its style signature changes. Color is attached to explicit UI fields instead of discovered by scanning arbitrary words, preventing menu labels and sentence fragments from receiving accidental state colors.
 
-- cyan for page titles, active backend, auto/running states;
-- green for active, visible, enabled, saved, and completed states;
-- yellow for warnings, fallback, stale, and coalesced states;
-- red for failed, rejected, and error states;
-- dark cyan for hotkey chords;
-- dark gray for separators, paths, navigation help, and inactive states;
-- white on dark blue for the complete selected menu row.
+- cyan for page titles, native backend, running/background states, and the selection marker;
+- green for explicit healthy states and `OK` severity tokens;
+- yellow for warning, fallback, and stale states;
+- red for `ERROR` severity and failed states;
+- dark cyan for section headings, requested backend mode, hotkey chords, and X-LAB identity;
+- dark gray for labels, separators, paths, navigation help, and inactive states;
+- white on dark gray for the complete selected menu row.
 
-Color is applied only by the render layer. Page builders continue producing deterministic text, so capture, navigation, and state logic remain independent of terminal styling.
+The Dashboard uses a fixed-column runtime grid, a structured last-capture block, aligned command shortcuts, and up to three newest session events. Status output uses one colored severity token (`INFO`, `OK`, `WARN`, or `ERROR`) while the message remains neutral.
 
 ## Differential rendering
 

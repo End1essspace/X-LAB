@@ -5,6 +5,8 @@
     <AssemblyName>SCapturer</AssemblyName>
     <RootNamespace>SCapturer.App</RootNamespace>
     <Product>SCapturer</Product>
+    <Authors>XCON</Authors>
+    <Company>X-LAB</Company>
     <Title>SCapturer</Title>
     <Description>High-performance screenshot utility with interactive and background lifecycle modes.</Description>
   </PropertyGroup>

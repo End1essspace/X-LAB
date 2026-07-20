@@ -65,6 +65,20 @@ internal sealed record ConsoleCommand(
     public static ConsoleCommand Redraw { get; } = new(ConsoleAction.Redraw);
 }
 
+
+internal enum ConsoleEventLevel
+{
+    Info,
+    Success,
+    Warning,
+    Error,
+}
+
+internal sealed record ConsoleEventItem(
+    DateTimeOffset Timestamp,
+    ConsoleEventLevel Level,
+    string Message);
+
 internal sealed record ConsoleViewModel(
     AppSettings Settings,
     string StatusMessage,
@@ -76,4 +90,5 @@ internal sealed record ConsoleViewModel(
     bool StartedInBackground,
     AutostartStatus Autostart,
     bool BenchmarkInProgress,
-    IReadOnlyList<RecentCaptureItem> RecentCaptures);
+    IReadOnlyList<RecentCaptureItem> RecentCaptures,
+    IReadOnlyList<ConsoleEventItem> Events);
