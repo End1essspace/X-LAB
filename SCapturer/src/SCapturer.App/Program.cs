@@ -36,6 +36,11 @@ internal static class Program
             return 4;
         }
 
+        if (launchOptions.ResumeAfterProcessId is int previousProcessId)
+        {
+            ConsoleCloseHandoffService.WaitForPreviousProcess(previousProcessId);
+        }
+
         var highDpiConfigured = Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         if (!highDpiConfigured && Application.HighDpiMode != HighDpiMode.PerMonitorV2)
         {
@@ -72,6 +77,9 @@ internal static class Program
         {
             return 0;
         }
+
+        using var consoleCloseHandoff =
+            new ConsoleCloseHandoffService(consoleVisibility);
 
         if (!launchOptions.StartHidden && !consoleVisibility.Show())
         {

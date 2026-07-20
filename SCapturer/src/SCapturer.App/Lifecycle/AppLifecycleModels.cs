@@ -16,19 +16,21 @@ internal sealed record AppLaunchOptions(
     bool StartHidden,
     AppInstanceCommand PrimaryCommand,
     AppInstanceCommand SecondaryCommand,
+    int? ResumeAfterProcessId,
     string? ErrorMessage)
 {
+    private const string ResumeBackgroundPrefix = "--resume-background=";
+
     public bool IsValid => string.IsNullOrWhiteSpace(ErrorMessage);
 
     public static AppLaunchOptions Parse(IReadOnlyList<string> arguments)
     {
         if (arguments.Count == 0)
         {
-            return new AppLaunchOptions(
-                StartHidden: false,
-                PrimaryCommand: AppInstanceCommand.None,
-                SecondaryCommand: AppInstanceCommand.ShowConsole,
-                ErrorMessage: null);
+            return Create(
+                startHidden: false,
+                primaryCommand: AppInstanceCommand.None,
+                secondaryCommand: AppInstanceCommand.ShowConsole);
         }
 
         if (arguments.Count != 1)
@@ -36,55 +38,66 @@ internal sealed record AppLaunchOptions(
             return Invalid("SCapturer accepts one command-line action at a time.");
         }
 
-        return arguments[0].Trim().ToLowerInvariant() switch
+        var argument = arguments[0].Trim();
+        if (argument.StartsWith(
+                ResumeBackgroundPrefix,
+                StringComparison.OrdinalIgnoreCase))
         {
-            "--background" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.None,
-                SecondaryCommand: AppInstanceCommand.None,
-                ErrorMessage: null),
+            var processIdText = argument[ResumeBackgroundPrefix.Length..];
+            if (!int.TryParse(processIdText, out var processId) || processId <= 0)
+            {
+                return Invalid(
+                    "The background-resume process identifier is invalid.");
+            }
 
-            "--show" => new AppLaunchOptions(
-                StartHidden: false,
-                PrimaryCommand: AppInstanceCommand.None,
-                SecondaryCommand: AppInstanceCommand.ShowConsole,
-                ErrorMessage: null),
+            return Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.None,
+                secondaryCommand: AppInstanceCommand.None,
+                resumeAfterProcessId: processId);
+        }
 
-            "--hide" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.None,
-                SecondaryCommand: AppInstanceCommand.HideConsole,
-                ErrorMessage: null),
+        return argument.ToLowerInvariant() switch
+        {
+            "--background" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.None,
+                secondaryCommand: AppInstanceCommand.None),
 
-            "--toggle-console" => new AppLaunchOptions(
-                StartHidden: false,
-                PrimaryCommand: AppInstanceCommand.ToggleConsole,
-                SecondaryCommand: AppInstanceCommand.ToggleConsole,
-                ErrorMessage: null),
+            "--show" => Create(
+                startHidden: false,
+                primaryCommand: AppInstanceCommand.None,
+                secondaryCommand: AppInstanceCommand.ShowConsole),
 
-            "--capture-full" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.CaptureFull,
-                SecondaryCommand: AppInstanceCommand.CaptureFull,
-                ErrorMessage: null),
+            "--hide" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.None,
+                secondaryCommand: AppInstanceCommand.HideConsole),
 
-            "--capture-region" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.CaptureRegion,
-                SecondaryCommand: AppInstanceCommand.CaptureRegion,
-                ErrorMessage: null),
+            "--toggle-console" => Create(
+                startHidden: false,
+                primaryCommand: AppInstanceCommand.ToggleConsole,
+                secondaryCommand: AppInstanceCommand.ToggleConsole),
 
-            "--cancel-region" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.CancelRegion,
-                SecondaryCommand: AppInstanceCommand.CancelRegion,
-                ErrorMessage: null),
+            "--capture-full" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.CaptureFull,
+                secondaryCommand: AppInstanceCommand.CaptureFull),
 
-            "--exit" => new AppLaunchOptions(
-                StartHidden: true,
-                PrimaryCommand: AppInstanceCommand.Exit,
-                SecondaryCommand: AppInstanceCommand.Exit,
-                ErrorMessage: null),
+            "--capture-region" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.CaptureRegion,
+                secondaryCommand: AppInstanceCommand.CaptureRegion),
+
+            "--cancel-region" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.CancelRegion,
+                secondaryCommand: AppInstanceCommand.CancelRegion),
+
+            "--exit" => Create(
+                startHidden: true,
+                primaryCommand: AppInstanceCommand.Exit,
+                secondaryCommand: AppInstanceCommand.Exit),
 
             _ => Invalid(
                 "Unknown argument. Supported: --background, --show, --hide, " +
@@ -93,12 +106,27 @@ internal sealed record AppLaunchOptions(
         };
     }
 
+    private static AppLaunchOptions Create(
+        bool startHidden,
+        AppInstanceCommand primaryCommand,
+        AppInstanceCommand secondaryCommand,
+        int? resumeAfterProcessId = null)
+    {
+        return new AppLaunchOptions(
+            startHidden,
+            primaryCommand,
+            secondaryCommand,
+            resumeAfterProcessId,
+            ErrorMessage: null);
+    }
+
     private static AppLaunchOptions Invalid(string message)
     {
         return new AppLaunchOptions(
             StartHidden: false,
             PrimaryCommand: AppInstanceCommand.None,
             SecondaryCommand: AppInstanceCommand.None,
+            ResumeAfterProcessId: null,
             ErrorMessage: message);
     }
 }

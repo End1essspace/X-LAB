@@ -116,6 +116,21 @@ Global console controls:
 
 Selection is retained independently for each page.
 
+
+## Semantic color rendering
+
+The renderer stores text and style spans as one differential frame. A line is redrawn when either its text or its style signature changes. Colors are deliberately semantic:
+
+- cyan for page titles, active backend, auto/running states;
+- green for active, visible, enabled, saved, and completed states;
+- yellow for warnings, fallback, stale, and coalesced states;
+- red for failed, rejected, and error states;
+- dark cyan for hotkey chords;
+- dark gray for separators, paths, navigation help, and inactive states;
+- white on dark blue for the complete selected menu row.
+
+Color is applied only by the render layer. Page builders continue producing deterministic text, so capture, navigation, and state logic remain independent of terminal styling.
+
 ## Differential rendering
 
 The renderer constructs a complete text frame but does not write the complete frame on every update.

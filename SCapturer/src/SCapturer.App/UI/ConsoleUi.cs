@@ -14,7 +14,7 @@ internal sealed class ConsoleUi
     private readonly Dictionary<ConsolePage, int> _selectionByPage = new();
 
     private ConsolePage _currentPage = ConsolePage.Dashboard;
-    private string[] _lastRenderedLines = Array.Empty<string>();
+    private StyledConsoleLine[] _lastRenderedLines = Array.Empty<StyledConsoleLine>();
     private int _lastWindowWidth;
     private int _lastWindowHeight;
     private bool _forceFullRedraw = true;
@@ -41,7 +41,7 @@ internal sealed class ConsoleUi
     public void Invalidate()
     {
         _forceFullRedraw = true;
-        _lastRenderedLines = Array.Empty<string>();
+        _lastRenderedLines = Array.Empty<StyledConsoleLine>();
     }
 
     public ConsoleCommand HandleKey(
@@ -150,7 +150,7 @@ internal sealed class ConsoleUi
         {
             TrySetCursorVisible(false);
             _forceFullRedraw = true;
-            _lastRenderedLines = Array.Empty<string>();
+            _lastRenderedLines = Array.Empty<StyledConsoleLine>();
         }
     }
 
@@ -391,6 +391,7 @@ internal sealed class ConsoleUi
         lines.Add($" Console state   {(model.ConsoleVisible ? "VISIBLE" : "HIDDEN")}");
         lines.Add($" Launch mode     {(model.StartedInBackground ? "BACKGROUND" : "INTERACTIVE")}");
         lines.Add($" Console hotkey  {HotkeyBindingService.Format(model.Settings.ToggleConsoleHotkey)}");
+        lines.Add(" Close button    BACKGROUND HANDOFF");
         lines.Add($" Windows startup {startupState}");
         lines.Add(" Startup command");
         lines.Add("   " + Truncate(model.Autostart.ExpectedCommand, width - 4));
@@ -681,6 +682,7 @@ internal sealed class ConsoleUi
         var normalized = sourceLines
             .Take(height)
             .Select(line => FitLine(line, contentWidth))
+            .Select((line, index) => StyleLine(line, index))
             .ToArray();
 
         var sizeChanged =
@@ -693,8 +695,9 @@ internal sealed class ConsoleUi
 
             if (_forceFullRedraw || sizeChanged)
             {
+                Console.ResetColor();
                 Console.Clear();
-                _lastRenderedLines = Array.Empty<string>();
+                _lastRenderedLines = Array.Empty<StyledConsoleLine>();
                 _forceFullRedraw = false;
             }
 
@@ -706,21 +709,29 @@ internal sealed class ConsoleUi
             {
                 var next = index < normalized.Length
                     ? normalized[index]
-                    : new string(' ', contentWidth);
+                    : StyledConsoleLine.CreatePlain(
+                        new string(' ', contentWidth),
+                        ConsoleColor.Gray,
+                        ConsoleColor.Black);
 
                 var previous = index < _lastRenderedLines.Length
                     ? _lastRenderedLines[index]
                     : null;
 
-                if (string.Equals(next, previous, StringComparison.Ordinal))
+                if (previous is not null &&
+                    string.Equals(
+                        next.Signature,
+                        previous.Signature,
+                        StringComparison.Ordinal))
                 {
                     continue;
                 }
 
                 Console.SetCursorPosition(0, index);
-                Console.Write(next);
+                WriteStyledLine(next);
             }
 
+            Console.ResetColor();
             _lastRenderedLines = normalized;
             _lastWindowWidth = width;
             _lastWindowHeight = height;
@@ -740,14 +751,17 @@ internal sealed class ConsoleUi
         }
     }
 
-    private void FallbackRender(IReadOnlyList<string> lines)
+    private void FallbackRender(IReadOnlyList<StyledConsoleLine> lines)
     {
         try
         {
+            Console.ResetColor();
             Console.Clear();
             foreach (var line in lines)
             {
-                Console.WriteLine(line.TrimEnd());
+                WriteStyledLine(line);
+                Console.ResetColor();
+                Console.WriteLine();
             }
         }
         catch (IOException)
@@ -761,10 +775,392 @@ internal sealed class ConsoleUi
         _forceFullRedraw = false;
     }
 
+    private static StyledConsoleLine StyleLine(string text, int lineIndex)
+    {
+        var foreground = Enumerable.Repeat(
+            ConsoleColor.Gray,
+            text.Length).ToArray();
+        var background = Enumerable.Repeat(
+            ConsoleColor.Black,
+            text.Length).ToArray();
+        var trimmed = text.Trim();
+
+        if (lineIndex == 0)
+        {
+            ApplyStyle(
+                foreground,
+                background,
+                0,
+                text.Length,
+                ConsoleColor.Cyan,
+                ConsoleColor.Black);
+        }
+        else if (trimmed.Length > 0 && trimmed.All(character => character == '─'))
+        {
+            ApplyStyle(
+                foreground,
+                background,
+                0,
+                text.Length,
+                ConsoleColor.DarkGray,
+                ConsoleColor.Black);
+        }
+        else if (text.TrimStart().StartsWith("> ", StringComparison.Ordinal))
+        {
+            ApplyStyle(
+                foreground,
+                background,
+                0,
+                text.Length,
+                ConsoleColor.White,
+                ConsoleColor.DarkBlue);
+        }
+        else
+        {
+            if (IsNavigationLine(trimmed))
+            {
+                ApplyStyle(
+                    foreground,
+                    background,
+                    0,
+                    text.Length,
+                    ConsoleColor.DarkGray,
+                    ConsoleColor.Black);
+            }
+            else if (IsSectionHeading(trimmed))
+            {
+                ApplyStyle(
+                    foreground,
+                    background,
+                    0,
+                    text.Length,
+                    ConsoleColor.Cyan,
+                    ConsoleColor.Black);
+            }
+            else if (LooksLikePath(trimmed))
+            {
+                ApplyStyle(
+                    foreground,
+                    background,
+                    0,
+                    text.Length,
+                    ConsoleColor.DarkGray,
+                    ConsoleColor.Black);
+            }
+
+            ApplyPrefixStyle(
+                text,
+                foreground,
+                background,
+                " Status:",
+                ConsoleColor.DarkGray);
+
+            ApplySemanticWords(text, foreground, background);
+            ApplyHotkeyStyles(text, foreground, background);
+        }
+
+        return StyledConsoleLine.Create(
+            text,
+            foreground,
+            background);
+    }
+
+    private static void ApplySemanticWords(
+        string text,
+        ConsoleColor[] foreground,
+        ConsoleColor[] background)
+    {
+        ApplyPhraseStyle(
+            text,
+            foreground,
+            background,
+            "Native GDI + WIC",
+            ConsoleColor.Cyan);
+        ApplyPhraseStyle(
+            text,
+            foreground,
+            background,
+            "Reference GDI+",
+            ConsoleColor.DarkCyan);
+
+        foreach (var word in new[]
+                 {
+                     "ACTIVE", "VISIBLE", "ENABLED", "PASS", "COMPLETED",
+                     "SAVED", "ON",
+                 })
+        {
+            ApplyWordStyle(
+                text,
+                foreground,
+                background,
+                word,
+                ConsoleColor.Green);
+        }
+
+        foreach (var word in new[]
+                 {
+                     "RUNNING", "CAPTURING", "SAVING", "PUBLISHING",
+                     "QUEUED", "AUTO", "BACKGROUND", "HANDOFF",
+                 })
+        {
+            ApplyWordStyle(
+                text,
+                foreground,
+                background,
+                word,
+                ConsoleColor.Cyan);
+        }
+
+        foreach (var word in new[]
+                 {
+                     "WARNING", "WARN", "FALLBACK", "STALE", "COALESCED",
+                 })
+        {
+            ApplyWordStyle(
+                text,
+                foreground,
+                background,
+                word,
+                ConsoleColor.Yellow);
+        }
+
+        foreach (var word in new[]
+                 {
+                     "ERROR", "FAILED", "FAIL", "REJECTED",
+                 })
+        {
+            ApplyWordStyle(
+                text,
+                foreground,
+                background,
+                word,
+                ConsoleColor.Red);
+        }
+
+        foreach (var word in new[]
+                 {
+                     "IDLE", "HIDDEN", "DISABLED", "OFF", "LOCAL",
+                 })
+        {
+            ApplyWordStyle(
+                text,
+                foreground,
+                background,
+                word,
+                ConsoleColor.DarkGray);
+        }
+    }
+
+    private static void ApplyHotkeyStyles(
+        string text,
+        ConsoleColor[] foreground,
+        ConsoleColor[] background)
+    {
+        var index = 0;
+        while (index < text.Length)
+        {
+            while (index < text.Length && char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+
+            var tokenStart = index;
+            while (index < text.Length && !char.IsWhiteSpace(text[index]))
+            {
+                index++;
+            }
+
+            if (tokenStart == index)
+            {
+                continue;
+            }
+
+            var token = text[tokenStart..index].TrimEnd('.', ',', ';', ':');
+            if (token.Contains('+') &&
+                (token.StartsWith("Ctrl+", StringComparison.OrdinalIgnoreCase) ||
+                 token.StartsWith("Alt+", StringComparison.OrdinalIgnoreCase) ||
+                 token.StartsWith("Shift+", StringComparison.OrdinalIgnoreCase) ||
+                 token.StartsWith("Win+", StringComparison.OrdinalIgnoreCase)))
+            {
+                ApplyStyle(
+                    foreground,
+                    background,
+                    tokenStart,
+                    token.Length,
+                    ConsoleColor.DarkCyan,
+                    ConsoleColor.Black);
+            }
+        }
+    }
+
+    private static void ApplyPrefixStyle(
+        string text,
+        ConsoleColor[] foreground,
+        ConsoleColor[] background,
+        string prefix,
+        ConsoleColor color)
+    {
+        if (text.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+        {
+            ApplyStyle(
+                foreground,
+                background,
+                0,
+                Math.Min(prefix.Length, text.Length),
+                color,
+                ConsoleColor.Black);
+        }
+    }
+
+    private static void ApplyPhraseStyle(
+        string text,
+        ConsoleColor[] foreground,
+        ConsoleColor[] background,
+        string phrase,
+        ConsoleColor color)
+    {
+        var searchStart = 0;
+        while (searchStart < text.Length)
+        {
+            var index = text.IndexOf(
+                phrase,
+                searchStart,
+                StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                break;
+            }
+
+            ApplyStyle(
+                foreground,
+                background,
+                index,
+                phrase.Length,
+                color,
+                ConsoleColor.Black);
+            searchStart = index + phrase.Length;
+        }
+    }
+
+    private static void ApplyWordStyle(
+        string text,
+        ConsoleColor[] foreground,
+        ConsoleColor[] background,
+        string word,
+        ConsoleColor color)
+    {
+        var searchStart = 0;
+        while (searchStart < text.Length)
+        {
+            var index = text.IndexOf(
+                word,
+                searchStart,
+                StringComparison.OrdinalIgnoreCase);
+            if (index < 0)
+            {
+                break;
+            }
+
+            var beforeBoundary = index == 0 || !IsWordCharacter(text[index - 1]);
+            var afterIndex = index + word.Length;
+            var afterBoundary = afterIndex >= text.Length ||
+                !IsWordCharacter(text[afterIndex]);
+
+            if (beforeBoundary && afterBoundary)
+            {
+                ApplyStyle(
+                    foreground,
+                    background,
+                    index,
+                    word.Length,
+                    color,
+                    ConsoleColor.Black);
+            }
+
+            searchStart = index + word.Length;
+        }
+    }
+
+    private static bool IsWordCharacter(char character)
+    {
+        return char.IsLetterOrDigit(character) || character == '_';
+    }
+
+    private static void ApplyStyle(
+        ConsoleColor[] foreground,
+        ConsoleColor[] background,
+        int start,
+        int length,
+        ConsoleColor foregroundColor,
+        ConsoleColor backgroundColor)
+    {
+        var end = Math.Min(foreground.Length, Math.Max(start, start + length));
+        for (var index = Math.Max(0, start); index < end; index++)
+        {
+            foreground[index] = foregroundColor;
+            background[index] = backgroundColor;
+        }
+    }
+
+    private static bool IsNavigationLine(string value)
+    {
+        return value.StartsWith("↑/↓", StringComparison.Ordinal) ||
+            value.StartsWith("Enter opens", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsSectionHeading(string value)
+    {
+        if (value.Length is < 3 or > 40)
+        {
+            return false;
+        }
+
+        var containsLetter = false;
+        foreach (var character in value)
+        {
+            if (char.IsLetter(character))
+            {
+                containsLetter = true;
+                if (char.IsLower(character))
+                {
+                    return false;
+                }
+            }
+            else if (!char.IsWhiteSpace(character) &&
+                     character is not '&' and not '/' and not '-')
+            {
+                return false;
+            }
+        }
+
+        return containsLetter;
+    }
+
+    private static bool LooksLikePath(string value)
+    {
+        return value.StartsWith(@"\\", StringComparison.Ordinal) ||
+            value.StartsWith("%", StringComparison.Ordinal) ||
+            (value.Length >= 3 &&
+             char.IsLetter(value[0]) &&
+             value[1] == ':' &&
+             (value[2] == '\\' || value[2] == '/'));
+    }
+
+    private static void WriteStyledLine(StyledConsoleLine line)
+    {
+        foreach (var span in line.Spans)
+        {
+            Console.ForegroundColor = span.Foreground;
+            Console.BackgroundColor = span.Background;
+            Console.Write(span.Text);
+        }
+    }
+
     private void PreparePrompt()
     {
         try
         {
+            Console.ResetColor();
             Console.Clear();
             Console.CursorVisible = true;
         }
@@ -973,4 +1369,80 @@ internal sealed class ConsoleUi
         string Label,
         ConsoleCommand Command,
         int RecentIndex);
+
+    private sealed record StyledConsoleSpan(
+        string Text,
+        ConsoleColor Foreground,
+        ConsoleColor Background);
+
+    private sealed record StyledConsoleLine(
+        string Text,
+        IReadOnlyList<StyledConsoleSpan> Spans,
+        string Signature)
+    {
+        public static StyledConsoleLine CreatePlain(
+            string text,
+            ConsoleColor foreground,
+            ConsoleColor background)
+        {
+            return new StyledConsoleLine(
+                text,
+                [new StyledConsoleSpan(text, foreground, background)],
+                $"{text}\u001f{(int)foreground}:{(int)background}");
+        }
+
+        public static StyledConsoleLine Create(
+            string text,
+            IReadOnlyList<ConsoleColor> foreground,
+            IReadOnlyList<ConsoleColor> background)
+        {
+            if (text.Length == 0)
+            {
+                return CreatePlain(
+                    string.Empty,
+                    ConsoleColor.Gray,
+                    ConsoleColor.Black);
+            }
+
+            var spans = new List<StyledConsoleSpan>();
+            var signature = new System.Text.StringBuilder(text.Length + 64);
+            signature.Append(text).Append('\u001f');
+            var spanStart = 0;
+
+            for (var index = 1; index <= text.Length; index++)
+            {
+                var boundary = index == text.Length ||
+                    foreground[index] != foreground[spanStart] ||
+                    background[index] != background[spanStart];
+
+                if (!boundary)
+                {
+                    continue;
+                }
+
+                var spanText = text[spanStart..index];
+                var spanForeground = foreground[spanStart];
+                var spanBackground = background[spanStart];
+                spans.Add(new StyledConsoleSpan(
+                    spanText,
+                    spanForeground,
+                    spanBackground));
+                signature
+                    .Append(spanStart)
+                    .Append(':')
+                    .Append(index - spanStart)
+                    .Append(':')
+                    .Append((int)spanForeground)
+                    .Append(':')
+                    .Append((int)spanBackground)
+                    .Append(';');
+                spanStart = index;
+            }
+
+            return new StyledConsoleLine(
+                text,
+                spans,
+                signature.ToString());
+        }
+    }
 }

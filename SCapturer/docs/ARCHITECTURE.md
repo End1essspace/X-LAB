@@ -126,6 +126,8 @@ P8 remains a conditional research gate. It is deferred unless measured P7 worklo
 
 `SCapturer.App` is a `WinExe`. `ConsoleVisibilityService` owns console attachment state: background mode allocates no console until management UI is first requested; after that first allocation, hide/show changes only the console window visibility. The process keeps one stable console attachment instead of repeatedly opening and closing standard handles. The SCapturer process and all capture services remain unchanged.
 
+`ConsoleCloseHandoffService` owns the exceptional native-title-bar close path. `AllocConsole` resets the Windows console-control handler table, so `ConsoleVisibilityService` publishes a console-attached event and the handoff service registers again. On `CTRL_CLOSE_EVENT`, it launches a hidden replacement that waits for the closing PID before entering the ordinary mutex-controlled startup path. This is intentionally separate from in-process hide/show because Windows does not allow a console process to cancel close-button termination.
+
 `AppInstanceService` owns a current-user named-pipe server. A secondary invocation discovers the existing process through the local mutex, forwards one semantic command, and exits. The IPC thread only enqueues commands; `AppController` executes them on its controller loop.
 
 `AutostartService` owns the current-user Run value. It reports disabled, current, stale, or error state and always registers the executable with `--background`.

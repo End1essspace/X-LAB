@@ -118,6 +118,13 @@ internal static class Program
         Assert.True(cancel.IsValid);
         Assert.Equal(AppInstanceCommand.CancelRegion, cancel.PrimaryCommand);
         Assert.Equal(AppInstanceCommand.CancelRegion, cancel.SecondaryCommand);
+
+        var resume = AppLaunchOptions.Parse(["--resume-background=4242"]);
+        Assert.True(resume.IsValid);
+        Assert.True(resume.StartHidden);
+        Assert.Equal(4242, resume.ResumeAfterProcessId);
+        Assert.Equal(AppInstanceCommand.None, resume.PrimaryCommand);
+        Assert.Equal(AppInstanceCommand.None, resume.SecondaryCommand);
     }
 
     private static void LaunchOptionValidation()
@@ -125,6 +132,12 @@ internal static class Program
         var invalid = AppLaunchOptions.Parse(["--show", "--hide"]);
         Assert.False(invalid.IsValid);
         Assert.Contains("one command-line", invalid.ErrorMessage ?? string.Empty);
+
+        var invalidResume = AppLaunchOptions.Parse(["--resume-background=invalid"]);
+        Assert.False(invalidResume.IsValid);
+        Assert.Contains(
+            "process identifier",
+            invalidResume.ErrorMessage ?? string.Empty);
     }
 
     private static void BenchmarkStatisticsCalculation()

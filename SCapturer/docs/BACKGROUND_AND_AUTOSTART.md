@@ -16,7 +16,7 @@ Background launch:
 dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release -- --background
 ```
 
-SCapturer is built as `WinExe`. Background launch therefore creates no console window. Interactive launch and later show requests allocate a console, bind standard input/output, and redraw the management UI without restarting capture services. Hiding frees only the console attachment; the process remains alive.
+SCapturer is built as `WinExe`. Background launch therefore creates no console window. Interactive launch and later show requests allocate a console, bind standard input/output, and redraw the management UI without restarting capture services. After the first allocation, ordinary hide/show operations reuse the console attachment and change only window visibility; the process remains alive.
 
 ## Console visibility
 
@@ -111,3 +111,16 @@ SCapturer stops accepting new captures, cancels an active selection overlay, fin
 ## Reliability isolation
 
 The P11 harness uses a unique internal instance suffix and data directory so it can exercise single-instance activation without touching the normal SCapturer process. It also disables global hotkey registration for the isolated process; lifecycle and capture requests continue through the production named-pipe command path.
+
+## Native close-button behavior
+
+Windows treats the `X` button of a native console differently from an application hide command. It emits `CTRL_CLOSE_EVENT`, and Windows terminates the attached process after the registered handlers return. That termination cannot be cancelled by returning `TRUE`.
+
+SCapturer handles this through a controlled background handoff:
+
+1. the close handler starts the same executable with an internal `--resume-background=<pid>` argument;
+2. the replacement waits for the closing process to release its PID and single-instance mutex;
+3. it starts the normal listener hidden with the same persisted settings;
+4. launching the EXE or pressing the console hotkey shows the management console again.
+
+This path is used only for the native close button. **Hide console**, `--hide`, and the console hotkey continue hiding the existing process without restart. An active capture should be allowed to finish before pressing `X`, because Windows controls the close-event termination deadline.

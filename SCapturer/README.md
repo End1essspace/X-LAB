@@ -7,7 +7,8 @@ The application publishes as one C# executable while retaining a reusable Window
 ## Current capabilities
 
 - interactive page-based console UI;
-- differential rendering without continuous `Console.Clear`;
+- styled differential rendering without continuous `Console.Clear`;
+- semantic console colors for runtime state, warnings, failures, hotkeys, and selection;
 - configurable global hotkeys with rollback;
 - complete physical virtual-desktop capture;
 - cached-frame rectangular region capture;
@@ -32,6 +33,7 @@ The application publishes as one C# executable while retaining a reusable Window
 - hidden background operation without restarting capture services;
 - configurable console show/hide hotkey;
 - single-instance activation and command forwarding;
+- close-button background handoff for the native console window;
 - current-user Windows autostart with stale-path detection;
 - dependency-free automated logic test suite;
 - isolated resource-soak and repeated lifecycle harness.
@@ -116,6 +118,8 @@ dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release -- --ba
 ```
 
 The same process continues to own hotkeys, capture, clipboard, display observation, and diagnostics while the console is hidden. Use the configurable console hotkey or launch SCapturer again to show the existing console. A second copy forwards its command through a current-user named pipe and exits.
+
+The native console close button has special Windows semantics: `CTRL_CLOSE_EVENT` always terminates the process after its control handlers run. SCapturer therefore performs a hidden background handoff when `X` is pressed. A replacement instance waits for the closing PID, acquires the normal single-instance mutex, and resumes the listener hidden. Normal menu/hotkey hiding remains an in-process `SW_HIDE` operation with no restart.
 
 Supported executable arguments:
 
@@ -243,5 +247,6 @@ dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -c Release -r win-x64 --
 - P9 — atomic PNG persistence and clipboard hardening: complete;
 - P10 — background lifecycle and Windows autostart: complete;
 - P11 — automated reliability tests and resource-soak validation: complete.
+- P12 — developer-console semantic color and close-button lifecycle polish: complete.
 
 Part of **X-LAB** — practical automation utilities.

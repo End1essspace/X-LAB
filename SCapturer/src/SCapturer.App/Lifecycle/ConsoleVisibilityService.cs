@@ -30,6 +30,19 @@ internal sealed class ConsoleVisibilityService
 
     public event Action<bool>? VisibilityChanged;
 
+    public event Action? ConsoleAttached;
+
+    public bool IsAttached
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _consoleAttached;
+            }
+        }
+    }
+
     public bool IsVisible
     {
         get
@@ -52,6 +65,7 @@ internal sealed class ConsoleVisibilityService
     public bool Show(bool activate = true)
     {
         var visibilityChanged = false;
+        var consoleAttached = false;
 
         lock (_gate)
         {
@@ -69,6 +83,7 @@ internal sealed class ConsoleVisibilityService
                     ConfigureConsole();
                     RebindStandardStreams();
                     _streamsBound = true;
+                    consoleAttached = true;
                 }
                 catch
                 {
@@ -99,6 +114,11 @@ internal sealed class ConsoleVisibilityService
                 _isVisible = true;
                 visibilityChanged = true;
             }
+        }
+
+        if (consoleAttached)
+        {
+            ConsoleAttached?.Invoke();
         }
 
         if (visibilityChanged)
