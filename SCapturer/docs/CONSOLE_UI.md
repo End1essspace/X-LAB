@@ -1,26 +1,22 @@
-# SCapturer Console UI Contract
+# Console UI
 
-## Purpose
+The SCapturer console is the primary management interface for capture settings, diagnostics, recent files, and background behavior.
 
-P6 turns the temporary milestone menu into the primary management interface for SCapturer.
-
-The console UI must remain responsive while pixel acquisition, PNG encoding, disk persistence, clipboard publication, diagnostics, and benchmark work execute outside the console thread.
+It is designed as a keyboard-first developer interface: compact, state-oriented, and responsive while capture work continues on background threads.
 
 ## Pages
 
 ### Dashboard
 
-Provides:
+The Dashboard provides the main runtime overview:
 
-- current listener and capture-pipeline state;
-- benchmark state;
-- display topology;
-- fixed-column runtime, backend, display, and pipeline telemetry;
-- structured last-capture metrics;
-- a bounded session event feed;
+- listener, console, pipeline, and benchmark state;
+- active and requested capture backend;
+- monitor count, DPI mode, session type, desktop bounds, and topology version;
+- structured details for the most recent capture;
+- full-desktop and region-capture commands;
 - access to every management page;
-- full and region capture commands;
-- process exit.
+- up to three recent session events.
 
 ### Capture Settings
 
@@ -28,18 +24,23 @@ Provides:
 
 - clipboard-copy toggle;
 - capture-sound toggle;
-- current lossless image policy.
+- requested backend selection;
+- effective backend and fallback state;
+- the fixed lossless PNG policy.
+
+Changing the backend affects future requests only. Active and already-pending requests retain their settings snapshot.
 
 ### Hotkeys
 
-Provides:
+Provides bindings for:
 
-- full-capture binding;
-- region-capture binding;
-- exit binding;
-- default restoration.
+- full-desktop capture;
+- region capture;
+- console visibility;
+- graceful exit;
+- restoring defaults.
 
-Hotkeys are entered as text. At least one modifier and one primary key are required.
+Bindings are entered as text and must contain at least one modifier and one primary key.
 
 Examples:
 
@@ -50,156 +51,191 @@ Win+Shift+S
 Alt+F10
 ```
 
-Update sequence:
+Hotkey updates are transactional:
 
-1. parse and normalize the requested combination;
-2. reject duplicate SCapturer bindings;
-3. unregister current bindings on the hotkey STA thread;
-4. ask Windows to register the complete candidate set;
-5. persist settings only after successful registration;
+1. parse and normalize the requested chord;
+2. reject duplicates inside the SCapturer binding set;
+3. unregister the current set on the hotkey STA thread;
+4. register the complete candidate set with Windows;
+5. persist settings only after registration succeeds;
 6. restore the previous set if registration fails.
 
-The application never leaves a partially applied candidate set active.
+SCapturer never leaves a partially applied hotkey set active.
 
 ### Save Locations
 
 Provides:
 
-- full-capture folder editing;
-- region-capture folder editing;
-- opening both folders.
+- the current full-capture and region-capture folders;
+- commands to change either folder;
+- commands to open either folder in Explorer.
+
+Long paths use middle truncation so the beginning and final directory or file name remain visible.
 
 ### Diagnostics
 
 Provides:
 
 - diagnostics logging toggle;
-- baseline benchmark launch;
-- diagnostics folder opening.
+- selected-backend baseline benchmark;
+- Reference GDI+ versus Native GDI + WIC comparison;
+- access to the diagnostics folder;
+- the benchmark decision gate.
+
+During a benchmark, normal capture requests are rejected to prevent unrelated work from contaminating the measurements.
 
 ### Recent Captures
 
-Displays up to twelve recent PNG files from the configured full and region folders.
+Displays up to twelve recent PNG files discovered from the configured full and region folders.
 
-Controls:
+| Key | Action |
+| --- | --- |
+| `Enter` | Open the selected image |
+| `F` | Open its containing folder |
+| `R` | Rescan both capture folders |
 
-- `Enter` — open selected file;
-- `F` — open selected file's containing folder;
-- `R` — rescan both capture folders.
-
-Recent history is filesystem-derived and does not require a database.
+The list is derived from the filesystem and does not require a database.
 
 ### Background and Startup
 
-Provides:
+Displays:
 
 - current console visibility;
-- interactive/background launch mode;
-- configurable console hotkey;
+- interactive or background launch state;
+- console hotkey;
 - Windows autostart state;
-- stale autostart registration repair;
-- a command to hide the console while keeping SCapturer running.
+- the expected autostart command;
+- stale registration or access errors;
+- the native close-button handoff behavior.
+
+The page can enable, disable, or repair current-user autostart and can hide the console while leaving SCapturer active.
 
 ### About
 
-Displays the current runtime, capture, storage, geometry, interface, and lifecycle boundaries, and identifies **XCON** as the author under **X-LAB**.
+Shows the current version, runtime, capture and storage boundaries, and project identity. The page identifies **XCON** as the author under **X-LAB**.
 
 ## Navigation
 
-Global console controls:
+Global controls:
 
-- `↑` / `↓` — move selection;
-- `J` / `K` — alternative selection controls;
-- `Home` / `End` — jump to first or last item;
-- `Enter` — activate selected item;
-- `1`–`9` and `0` — activate a visible menu item directly;
-- `Esc` / `Backspace` — return to Dashboard.
+| Key | Action |
+| --- | --- |
+| `↑` / `↓` | Move selection |
+| `J` / `K` | Alternative selection controls |
+| `Home` / `End` | Jump to the first or last item |
+| `Enter` | Run the selected action |
+| `1`–`9`, `0` | Run a visible item directly |
+| `Esc` / `Backspace` | Return to the Dashboard |
 
 Selection is retained independently for each page. The native console title follows the active page, for example `SCapturer — Diagnostics`.
 
+The footer shows only controls relevant to the current page.
 
-## Semantic color rendering
+## Layout model
 
-The renderer stores text and style spans as one differential frame. A line is redrawn when either its text or its style signature changes. Color is attached to explicit UI fields instead of discovered by scanning arbitrary words, preventing menu labels and sentence fragments from receiving accidental state colors.
+The interface uses a consistent structure:
 
-- cyan for page titles, native backend, running/background states, and the selection marker;
-- green for explicit healthy states and `OK` severity tokens;
-- yellow for warning, fallback, and stale states;
-- red for `ERROR` severity and failed states;
-- dark cyan for section headings, requested backend mode, hotkey chords, and X-LAB identity;
-- dark gray for labels, separators, paths, navigation help, and inactive states;
-- white on dark gray for the complete selected menu row.
+1. centered page title;
+2. runtime telemetry grid;
+3. page-specific content;
+4. status line;
+5. context-aware navigation hints.
 
-The Dashboard uses a fixed-column runtime grid, a structured last-capture block, aligned command shortcuts, and up to three newest session events. Status output uses one colored severity token (`INFO`, `OK`, `WARN`, or `ERROR`) while the message remains neutral.
+Runtime fields use fixed columns so changing values do not move unrelated labels across the screen. Menu shortcuts and state values are aligned to the right where space allows.
+
+The minimum useful console size is `64×28`. Below that size, SCapturer displays a resize instruction instead of a partially clipped page.
+
+## Semantic colors
+
+Color is attached to explicit UI fields rather than inferred from arbitrary words.
+
+| Color | Meaning |
+| --- | --- |
+| Cyan | Page title, native backend, running or background state, selection marker |
+| Green | Healthy or enabled state, successful status token |
+| Yellow | Warning, fallback, stale registration |
+| Red | Error or failed state |
+| Dark cyan | Section headings, requested backend, hotkey chords, X-LAB identity |
+| Dark gray | Labels, rules, paths, help text, inactive state |
+| White on dark gray | Selected menu row |
+
+Status lines use one colored severity token—`INFO`, `OK`, `WARN`, or `ERROR`—while the message itself remains neutral.
+
+This keeps color meaningful and avoids accidental emphasis inside ordinary sentences or menu labels.
 
 ## Differential rendering
 
-The renderer constructs a complete text frame but does not write the complete frame on every update.
+The renderer builds a complete styled frame but writes only lines whose text or style changed.
 
-For each render:
+Each render pass:
 
-1. read the current console width and height;
-2. normalize and truncate visible lines;
-3. compare each line with the previously rendered line;
-4. reposition the cursor only for changed lines;
-5. clear only lines that disappeared;
-6. preserve the selection and page state.
+1. reads the current console dimensions;
+2. builds and truncates the visible styled lines;
+3. compares every line with the previous frame signature;
+4. repositions the cursor only for changed lines;
+5. overwrites lines that disappeared;
+6. preserves page and selection state.
 
-A full clear is allowed only when:
+A full clear is used only when necessary:
 
 - entering a text prompt;
 - changing pages;
-- the terminal is resized;
-- the renderer recovers from unsupported cursor operations.
+- resizing the terminal;
+- recovering from unsupported cursor operations;
+- showing a console whose previous frame is no longer valid.
 
-Capture-pipeline state changes therefore update the status area without repeatedly flashing the complete console.
-
-## Resize behavior
-
-When the terminal is below the minimum useful dimensions (64×28 in P10), the UI displays a compact resize message instead of drawing a truncated management page.
-
-A resize invalidates the previous frame and triggers one full redraw at the new dimensions.
+Frequent pipeline or status updates therefore do not flash the complete window.
 
 ## Threading boundary
 
-Only the console thread:
+Only the controller thread interacts with console input and output:
 
-- reads `Console.KeyAvailable`;
-- reads `Console.ReadKey`;
-- performs differential rendering;
-- opens blocking text prompts.
+- `Console.KeyAvailable`;
+- `Console.ReadKey`;
+- differential rendering;
+- blocking text prompts.
 
-Capture, hotkey, display-topology, and benchmark threads publish immutable state updates. They request a render but never write directly to the console.
+Capture, hotkey, display-topology, IPC, and benchmark workers publish immutable state updates and request a redraw. They never write directly to the terminal.
 
-## P7 backend controls
+When the console is hidden, rendering and key polling stop. The controller continues processing hotkeys, IPC commands, capture events, and shutdown requests at a reduced management-loop cadence.
 
-The Capture Settings page displays:
+## Status and session events
 
-- configured backend mode;
-- actual active backend;
-- visible fallback state and reason when native WIC is unavailable.
+`AppController` keeps a bounded in-memory queue of session events. It records useful runtime changes such as:
 
-Cycling the backend changes future capture requests only. Active and already-pending requests retain their settings snapshot.
+- listener startup;
+- capture completion, cancellation, or failure;
+- clipboard and storage warnings;
+- display-topology changes;
+- IPC activation;
+- benchmark state.
 
-The Diagnostics page provides two separate operations:
+The Dashboard shows up to three newest entries. This event feed is intentionally temporary; persistent capture diagnostics remain in the diagnostics files.
 
-1. selected-backend baseline;
-2. Reference GDI+ versus Native GDI + WIC comparison.
+## Capture warnings
 
-During either benchmark, normal capture requests are rejected so measurements are not contaminated by concurrent capture work.
+A capture remains successful when its PNG has been committed but an optional post-processing step fails.
 
-## P9 capture warnings
+Examples:
 
-The Dashboard keeps a capture in the completed state when its PNG was committed but an optional post-processing action failed.
+- the configured folder was unavailable and the default folder was used;
+- Windows kept the clipboard locked through the retry window.
 
-The last-capture section displays a warning count, while the Status area contains the warning text. Structured warnings are also written to diagnostics when diagnostics are enabled.
+The Dashboard shows the warning count, the status line shows the current message, and diagnostics store structured warnings when enabled.
 
-Current warning categories:
+## Text prompts
 
-- storage fallback;
-- clipboard publication.
+Hotkey and folder edits use a dedicated prompt view showing:
 
+- prompt title;
+- current value;
+- input guidance;
+- an empty-input cancellation path.
+
+After input completes, the previous page is invalidated and redrawn from current state.
 
 ## Hidden-console behavior
 
-The console renderer and input reader run only while the console window is visible. When hidden, the controller continues processing hotkeys, IPC commands, captures, and shutdown requests at a reduced management-loop cadence. Showing the console invalidates the previous terminal frame and performs one clean redraw.
+Normal hide/show actions keep the same process, service graph, and console attachment. Hiding only changes window visibility.
+
+Closing the native console with `X` follows the separate background handoff path described in [Background and autostart](BACKGROUND_AND_AUTOSTART.md). When the replacement instance later shows the console, the renderer starts with a clean frame.

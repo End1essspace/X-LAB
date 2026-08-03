@@ -1,76 +1,160 @@
-# SCapturer Performance Baseline and P9 Persistence Hardening
+# Performance and Benchmarking
 
-## Backend architecture
+SCapturer measures the complete screenshot path rather than only the screen-copy call. The goal is to compare capture backends under the same persistence contract and to detect regressions in latency, allocations, and long-running resource use.
 
-P7 keeps two complete implementations behind `ICaptureBackend`.
+## Capture backends
+
+Both implementations satisfy the same `ICaptureBackend` contract.
 
 ### Reference GDI+
 
-- managed `Bitmap` frame;
-- `Graphics.CopyFromScreen`;
-- GDI+ crop and PNG encoder.
+The reference backend uses:
+
+- a managed `Bitmap` frame;
+- `Graphics.CopyFromScreen` for desktop acquisition;
+- GDI+ drawing for region crops;
+- the GDI+ PNG encoder.
+
+It is always available and serves as the compatibility baseline.
 
 ### Native GDI + WIC
 
-- top-down 32-bit `CreateDIBSection`;
-- `BitBlt` into a reusable memory device context;
-- direct native crop with `BitBlt`;
-- WIC PNG encoder receiving the BGRA buffer through `WritePixels`.
+The native backend uses:
 
-The native frame exposes a temporary `Bitmap` view over the same DIB memory for the existing overlay and clipboard boundaries. It does not copy the complete frame into a second managed bitmap.
+- a top-down 32-bit `CreateDIBSection`;
+- a dedicated memory device context;
+- `BitBlt` for desktop acquisition and region crops;
+- Windows Imaging Component for PNG encoding through `WritePixels`.
+
+A temporary managed `Bitmap` view references the same DIB memory for overlay and clipboard boundaries. The full frame is not copied into a second managed bitmap.
+
+Availability is probed through WIC initialization. When the native backend cannot be created, SCapturer falls back visibly to the reference backend.
 
 ## Opaque alpha normalization
 
-A 32-bit GDI desktop DIB does not provide a reliable alpha byte. The native backend normalizes every captured pixel to opaque BGRA before WIC encoding or overlay use.
+Desktop pixels copied into a 32-bit GDI DIB do not provide a reliable alpha byte. The native backend therefore sets every pixel's alpha channel to fully opaque before the frame is used by the overlay, clipboard, or PNG encoder.
 
-This avoids transparent PNG output while preserving RGB values.
+The normalization pass preserves RGB values and is included in pixel-acquisition timing.
 
-The normalization pass is included in pixel-acquisition timing.
+## Per-capture metrics
 
-## Existing measurements
+Each completed capture records:
 
-Both backends report the same metrics:
+| Metric | Scope |
+| --- | --- |
+| Dispatch | Delay between the request timestamp and worker execution |
+| Directory preparation | Path normalization, creation, validation, and destination allocation |
+| Buffer allocation | Backend frame allocation |
+| Pixel acquisition | Desktop copy, including native alpha normalization |
+| PNG persistence | Encoding, validation, disk flush, and atomic rename |
+| Clipboard | Optional clipboard publication |
+| Sound | Optional capture-sound dispatch |
+| Total | End-to-end capture duration |
+| Managed allocations | Bytes allocated on the capture worker thread |
+| Working set | Process working set before and after capture |
 
-- dispatch;
-- directory preparation;
-- buffer allocation;
-- physical pixel acquisition;
-- PNG persistence;
-- clipboard publication;
-- sound dispatch;
-- total duration;
-- managed allocations on the capture thread;
-- working set before and after capture.
-
-Each result also records the backend kind and display name.
+The capture result also records the effective backend, dimensions, file size, topology context, and warnings. Benchmark reports additionally record the requested backend mode.
 
 ## Selected-backend baseline
 
-The existing baseline benchmark uses the currently selected backend. Its report schema is version `2.0` and includes the backend mode and actual backend name.
+The baseline benchmark runs the backend currently selected in settings.
 
-This supports repeated measurements after the comparison decision.
+Default workload:
+
+```text
+1 warm-up capture
+10 measured captures
+```
+
+Benchmark captures:
+
+- use the normal production capture and persistence path;
+- disable clipboard publication;
+- disable capture sound;
+- disable per-capture diagnostics;
+- are deleted after each sample on a best-effort basis.
+
+The JSON report uses schema version `2.0` and includes the operating system, runtime, process architecture, processor count, dimensions, backend identity, individual samples, and summary statistics.
+
+Reports are written under:
+
+```text
+%LOCALAPPDATA%\SCapturer\diagnostics\benchmarks
+```
 
 ## Backend comparison
 
-The comparison benchmark runs one warm-up and ten measured captures for each backend under the same settings and target volume.
-
-The decision uses:
+The comparison benchmark runs the same workload for both implementations:
 
 ```text
-native p95 improvement = (reference p95 - native p95) / reference p95
-native allocation improvement = (reference allocations - native allocations) / reference allocations
+Reference GDI+: 1 warm-up + 10 measured captures
+Native GDI + WIC: 1 warm-up + 10 measured captures
 ```
 
-Native passes only when:
+Both sides use the same settings and target volume.
 
-- median total duration does not regress by more than 5%; and
-- p95 total duration or managed allocations improve by at least 20%.
+The comparison calculates:
 
-The recommended mode is persisted automatically after a successful comparison.
+```text
+p95 improvement =
+    (reference p95 - native p95) / reference p95 × 100
 
-## Resource ownership
+allocation improvement =
+    (reference average allocations - native average allocations)
+    / reference average allocations × 100
+```
 
-A native frame owns:
+The native backend is recommended only when both conditions hold:
+
+1. its median total duration does not regress by more than 5%;
+2. either p95 total duration or average managed allocations improves by at least 20%.
+
+Otherwise the reference backend remains selected. A successful comparison persists the recommended mode to settings and writes a report containing both sample sets and the decision reason.
+
+## Summary statistics
+
+The benchmark reports:
+
+- median total duration;
+- p95 total duration;
+- fastest and slowest total duration;
+- median pixel-acquisition duration;
+- median PNG-persistence duration;
+- average managed allocations;
+- average file size.
+
+For small local runs, p95 is calculated with the nearest-rank method. With ten samples, it therefore represents the slowest sample. Use longer external runs when a more stable tail-latency estimate is required.
+
+## Persistence cost
+
+`PngPersistenceMilliseconds` includes the complete durability boundary:
+
+1. PNG encoding;
+2. non-empty temporary-file validation;
+3. explicit disk flush;
+4. same-directory atomic rename.
+
+This makes benchmark results directly comparable with production captures, but it also means storage performance can dominate total latency.
+
+Destination validation is cached per folder. Stale temporary-file cleanup runs once per folder, and the local free-space check is constant-time.
+
+## Bounded execution model
+
+SCapturer permits:
+
+```text
+one active request + one coalesced pending request
+```
+
+A new request replaces the existing pending request with the latest settings and trigger. The application does not start parallel capture workers, PNG encoders, or region overlays.
+
+Clipboard publication uses a separate STA dispatcher with a queue capacity of one. Single-instance IPC blocks asynchronously until another invocation connects.
+
+When the console is hidden, terminal rendering and keyboard polling stop; the management loop moves from a 40 ms to a 200 ms cadence. Capture and lifecycle services remain event-driven.
+
+## Native resource ownership
+
+Each native frame owns:
 
 - one memory device context;
 - one selected DIB section;
@@ -84,70 +168,42 @@ Disposal order is fixed:
 3. delete the DIB section;
 4. delete the memory device context.
 
-WIC encoder, frame encoder, property bag, and output stream COM references are released after every persistence operation.
+WIC stream, encoder, frame encoder, and encoder-option COM references are released after every persistence operation.
 
-## Bounded pipeline
+## Reliability resource gates
 
-P7 does not change the queue limit:
+The Windows reliability harness samples the process after one-time subsystems have been warmed up. This prevents normal .NET, console, WinForms, GDI, and WIC initialization from being misclassified as leaks.
 
-```text
-one active request + one coalesced pending request
-```
+Default maximum final growth:
 
-No backend may start a parallel PNG encoder or create another overlay worker.
+| Resource | Gate |
+| --- | ---: |
+| GDI objects | `+8` |
+| USER objects | `+8` |
+| Process handles | `+32` |
+| Threads | `+3` |
+| Private memory | greater of `48 MB` or `20%` of baseline |
+| Working set | greater of `64 MB` or `30%` of baseline |
 
-## P7 acceptance checks
+The harness also requires:
 
-P7 is accepted when:
+- no capture timeouts;
+- no failed IPC commands;
+- no unexpected region PNG after cancellation;
+- no remaining `.scapturer.tmp` files;
+- graceful exit for every repeated process cycle.
 
-- both backends build and create valid opaque PNG files;
-- full and region capture work through both backends;
-- WIC unavailability falls back visibly to reference;
-- the comparison report contains two complete sample sets;
-- the persisted recommendation matches the documented gate;
-- native does not regress mixed-DPI or topology handling;
-- repeated backend switching does not leak resources;
-- console responsiveness remains equivalent to P6.
+See [Reliability validation](RELIABILITY.md) for the complete workload and commands.
 
+## Interpreting benchmark results
 
-## P9 persistence cost
+For useful comparisons:
 
-`PngPersistenceMilliseconds` now includes complete encoding, validation, explicit disk flush, and atomic same-directory rename. P9 baseline numbers are therefore expected to include a small durability cost compared with P7.
+- keep the monitor topology and resolution unchanged;
+- use the same destination volume;
+- avoid unrelated disk-heavy or GPU-heavy work;
+- compare reports produced by the same build configuration;
+- treat p95 and resource growth as more important than one unusually fast sample;
+- rerun after changes to persistence, capture buffers, DPI handling, or lifecycle code.
 
-The operation does not expose a final file until all of those steps succeed. Benchmark temporary PNG files use the same transaction, keeping production and benchmark persistence comparable.
-
-## Clipboard isolation
-
-Clipboard publication runs on a dedicated STA dispatcher and is measured in `ClipboardMilliseconds`. The dispatcher is bounded to one request and retries a locked clipboard for at most two seconds with exponential backoff.
-
-A clipboard failure adds a warning but does not change the successful PNG transaction into a failed capture. Benchmarks continue to disable clipboard publication.
-
-## Storage checks
-
-Destination folder validation is cached per process. Stale temporary cleanup runs once per folder, not on every capture. Local free-space checks are O(1) and occur before PNG encoding.
-
-## P9 acceptance checks
-
-P9 is accepted when:
-
-- persistence timings remain bounded after adding flush and rename;
-- no final partial PNG appears after a forced encoder or disk failure;
-- clipboard lock tests preserve the final PNG;
-- fallback saves include a structured warning;
-- repeated captures do not accumulate temporary files;
-- the clipboard dispatcher and capture worker remain single-instance and bounded.
-
-
-## P10 background lifecycle
-
-P10 does not create a second capture worker or a polling IPC loop. The named-pipe server blocks asynchronously until another invocation connects.
-
-When the console is visible, the existing management loop retains its 40 ms cadence. When hidden, it uses a 200 ms cadence and performs no terminal rendering or keyboard polling. Global hotkeys, display events, named-pipe activation, capture, persistence, and clipboard publication remain event-driven on their existing threads.
-
-P10 acceptance requires no material increase in idle CPU, handles, or warm working set after repeatedly showing and hiding the console.
-
-## P11 reliability gates
-
-P11 measures resource growth after warm-up rather than comparing process-start values. The default soak gate permits bounded runtime variance but rejects linear accumulation: GDI and USER deltas must remain within 8, process handles within 32, threads within 3, private-memory growth within the greater of 48 MB or 20%, and working-set growth within the greater of 64 MB or 30%.
-
-The resource harness also requires zero capture timeouts, zero IPC command failures, zero unexpected region PNG files, zero remaining `.scapturer.tmp` files, and successful graceful exit for every repeated process cycle.
+A faster screen copy alone is not enough to justify a backend change. The selected implementation must improve measured end-to-end behavior without weakening capture correctness, topology handling, persistence, or resource stability.

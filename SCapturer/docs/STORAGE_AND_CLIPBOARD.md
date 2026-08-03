@@ -1,119 +1,152 @@
-# SCapturer Storage and Clipboard Contract
+# Storage and Clipboard Behavior
 
-## Purpose
+SCapturer treats durable PNG persistence as the capture's success boundary. Clipboard publication is optional and occurs only after the image has been committed under its final file name.
 
-P9 separates durable PNG persistence from optional clipboard publication.
+A clipboard failure therefore produces a warning, not a failed screenshot.
 
-A screenshot is successful when its PNG has been committed under the final file name. Clipboard publication may succeed or fail independently and is represented as a warning rather than a failed capture.
+## Default locations
+
+| Capture type | Default folder |
+| --- | --- |
+| Full desktop | `%USERPROFILE%\Pictures\SCapturer\Full` |
+| Region | `%USERPROFILE%\Pictures\SCapturer\Snips` |
+
+The folders can be changed from **Save Locations**. The selected paths are stored in `%LOCALAPPDATA%\SCapturer\config.json`.
 
 ## Atomic PNG transaction
 
-For every full or region capture:
+Full and region captures use the same persistence sequence:
 
-1. resolve and validate the destination folder;
-2. allocate a unique temporary path in that same folder;
-3. encode the complete PNG to `*.scapturer.tmp`;
-4. verify that the temporary file exists and is non-empty;
-5. flush the temporary file to the storage device;
-6. rename it to a collision-safe final `.png` name;
-7. expose the final path to recent captures and diagnostics.
+1. normalize and validate the destination folder;
+2. create the folder when it does not exist;
+3. verify write access;
+4. allocate a unique temporary path in that folder;
+5. encode the complete image to `*.scapturer.tmp`;
+6. verify that the temporary file exists and is not empty;
+7. flush the file to the storage device;
+8. rename it to a collision-safe final `.png` name;
+9. publish the final path to recent captures and diagnostics.
 
-The rename stays within one directory and volume. A partially encoded image is never published under its final name.
+The temporary file and final file remain in the same directory and volume. The final name is not visible until encoding and the explicit flush have completed.
 
-If any step before the rename fails, SCapturer deletes the temporary file on a best-effort basis and reports capture failure.
+When any pre-commit step fails, SCapturer attempts to delete the temporary file and reports the capture as failed.
 
-## Collision handling
+## File naming and collisions
 
-The initial final name uses a millisecond timestamp:
+Base names include a millisecond timestamp:
 
 ```text
 Screenshot_2026-07-20_01-42-18-315.png
 Snip_2026-07-20_01-42-18-315.png
 ```
 
-If another writer already owns that name, SCapturer increments a numeric suffix without re-encoding the PNG.
+If another file already owns the candidate name, SCapturer appends a numeric suffix:
+
+```text
+Screenshot_2026-07-20_01-42-18-315_1.png
+```
+
+The existing file is never overwritten, and the PNG is not re-encoded while searching for a free name.
 
 ## Folder validation and fallback
 
-The configured folder is normalized, created, and tested for write access before capture buffers are allocated.
+The configured destination is validated before the capture buffer is allocated. Validation includes path normalization, directory creation, a write probe, and a conservative path-length check.
 
-SCapturer falls back to the corresponding default folder when the configured path is:
+SCapturer uses a 240-character persistence boundary to avoid ambiguous behavior on Windows installations where long-path support is not consistently available.
+
+The matching default folder is used as a fallback when the configured path is:
 
 - empty or malformed;
-- too long for the conservative Windows persistence boundary;
-- inaccessible;
-- read-only;
-- unavailable at capture time.
+- inaccessible or read-only;
+- unavailable at capture time;
+- longer than the conservative boundary;
+- unable to pass the write probe.
 
-Fallback locations:
+Fallback does not rewrite the user's configured setting. The capture result records the actual path and adds a `StorageFallback` warning, which is also available to the console and diagnostics log.
 
-```text
-%USERPROFILE%\Pictures\SCapturer\Full
-%USERPROFILE%\Pictures\SCapturer\Snips
-```
-
-The configured setting is not silently overwritten. The actual saved path and a `StorageFallback` warning are attached to the capture result and diagnostics entry.
+If both the configured folder and the default folder are unavailable, the capture fails.
 
 ## Free-space protection
 
-Before encoding, local-drive free space is checked against:
+Before PNG encoding on a local drive, SCapturer requires at least:
 
 ```text
-raw frame bytes + 8 MB reserve
+raw frame size + 8 MB reserve
 ```
 
-This is deliberately conservative. Network and provider paths that cannot be represented through `DriveInfo` rely on the encoder and filesystem error as the source of truth.
+The raw size is calculated from frame stride and height. This is deliberately conservative because the final PNG size cannot be known before encoding.
+
+UNC paths and provider-backed paths that cannot be represented reliably through `DriveInfo` skip the preflight check. For those destinations, the encoder and filesystem error remain the source of truth.
 
 ## Temporary-file cleanup
 
-The first use of a destination folder in each process removes abandoned `*.scapturer.tmp` files older than 24 hours.
+The first use of each destination folder in a process removes abandoned `*.scapturer.tmp` files older than 24 hours.
 
-Recent temporary files and locked files are left untouched.
+The cleanup is best-effort:
 
-## Clipboard dispatcher
+- recent temporary files are retained;
+- locked files are retained;
+- cleanup failures do not block a new capture.
 
-Clipboard publication runs on one dedicated STA thread:
+The write probe and cleanup result are cached per folder for the lifetime of the process.
+
+## Clipboard publication
+
+Clipboard work runs on one dedicated STA thread named:
 
 ```text
 SCapturer Clipboard Dispatcher
 ```
 
-The dispatcher owns a bounded queue of one request. The image is cloned before transfer so the capture frame can be released independently after the publication request completes or times out.
+The dispatcher has a bounded queue of one request. SCapturer clones the image before enqueueing it, allowing the capture frame to be released independently of clipboard ownership.
 
-When Windows reports a locked clipboard, the dispatcher retries with exponential delays:
+When Windows reports that the clipboard is locked, publication retries with exponential delays:
 
 ```text
 25 ms → 50 ms → 100 ms → 200 ms → 400 ms
 ```
 
-Retries stop after a two-second publication window.
+Retries stop after a two-second publication window. The capture caller waits for at most three seconds for the dispatcher result.
+
+The queue remains bounded: a second clipboard request is rejected rather than growing an unbounded backlog.
 
 ## Failure semantics
 
-### PNG failure
+| Condition | PNG result | Pipeline result | Additional behavior |
+| --- | --- | --- | --- |
+| Encoder, flush, or rename fails | No final file is exposed | `FAILED` | Temporary cleanup is attempted |
+| Configured folder fails, fallback succeeds | Valid PNG in default folder | Completed | `StorageFallback` warning |
+| Clipboard is busy or times out | Valid PNG remains committed | Completed | `ClipboardPublication` warning |
+| Both configured and fallback folders fail | No final file | `FAILED` | Error identifies both destinations |
 
-- capture result is failed;
-- no final `.png` is exposed;
-- temporary-file cleanup is attempted;
-- the pipeline reports `FAILED`.
+Recent captures only expose committed final files. Clipboard publication cannot delete or invalidate an already committed PNG.
 
-### Clipboard failure
+## Diagnostics
 
-- final PNG remains valid;
-- capture result is completed;
-- a `ClipboardPublication` warning is attached;
-- console status and diagnostics explain the failure.
+When diagnostics are enabled, each completed capture can record:
 
-## Acceptance checks
+- final file path and size;
+- capture kind and dimensions;
+- backend name;
+- storage fallback warnings;
+- clipboard publication warnings;
+- persistence and clipboard timing.
 
-P9 is accepted when:
+The metrics log is stored at:
 
-- an encoder interruption leaves no final partial PNG;
-- final names do not overwrite existing files;
-- a read-only configured folder produces a valid fallback PNG and warning;
-- insufficient local free space fails before encoding;
-- a locked clipboard does not fail or delete the PNG;
-- clipboard retry completes within the bounded timeout;
-- repeated captures leave no recent temporary files;
-- diagnostics records storage and clipboard warnings;
-- full and region capture remain compatible with both capture backends.
+```text
+%LOCALAPPDATA%\SCapturer\diagnostics\capture-metrics.jsonl
+```
+
+## Verification expectations
+
+Storage and clipboard behavior is considered healthy when:
+
+- interrupted encoding never exposes a partial final PNG;
+- name collisions preserve existing files;
+- fallback saves produce a valid PNG and a structured warning;
+- local free-space failures occur before encoding;
+- clipboard contention does not fail or delete the PNG;
+- retry and caller wait times remain bounded;
+- repeated captures do not accumulate recent temporary files;
+- full and region capture behave consistently across both backends.

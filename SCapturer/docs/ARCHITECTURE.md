@@ -1,147 +1,235 @@
-# SCapturer Architecture
+# Architecture
 
-## Current boundary
+SCapturer ships as one Windows executable while keeping the application shell separate from the reusable capture and persistence logic.
 
-SCapturer publishes as one executable while separating application concerns from reusable Windows capture logic.
+The design is intentionally small: one controller loop, one bounded capture worker, one clipboard dispatcher, and explicit ownership of every native or managed resource.
+
+## Solution boundaries
 
 ### `SCapturer.App`
 
-Owns:
+The application project owns process-level behavior:
 
-- process entry point and single-instance mutex;
-- process-level Per-Monitor V2 initialization;
-- interactive console lifecycle;
-- page navigation and differential rendering;
+- program startup and Per-Monitor V2 initialization;
+- single-instance mutex and command forwarding;
+- console allocation, visibility, and close-button handoff;
+- page navigation and differential terminal rendering;
 - command dispatch and settings orchestration;
-- backend comparison presentation and recommendation persistence;
-- composition of core services;
-- background console lifecycle;
-- single-instance command routing.
+- composition and lifetime of core services;
+- presentation of diagnostics and benchmark results.
 
 ### `SCapturer.Core`
 
-Owns:
+The core project owns Windows capture behavior and persistent application state:
 
 - capture backend interfaces and selection;
-- reference GDI+ capture and persistence;
-- native GDI frame allocation and WIC PNG encoding;
-- native display-topology discovery and invalidation;
-- rectangular snipping;
-- clipboard publication;
-- global hotkey registration and live reconfiguration;
-- diagnostics, baseline reports, and backend comparison reports;
-- recent-capture discovery;
+- reference GDI+ and native GDI + WIC implementations;
+- physical display topology discovery and invalidation;
+- full-desktop and rectangular region capture;
 - bounded capture coordination;
-- settings and application paths;
-- atomic PNG persistence and clipboard publication.
+- atomic PNG persistence;
+- clipboard publication;
+- global hotkey registration and reconfiguration;
+- settings, application paths, diagnostics, and recent captures;
+- baseline and backend-comparison benchmarks.
 
-## Shared STA worker
+Production code does not reference the test or reliability projects.
 
-`CaptureCoordinator` owns one background STA thread. Full and region captures execute there, keeping the hotkey message loop and console loop free from pixel acquisition, overlay interaction, PNG encoding, disk I/O, and clipboard calls.
+## Runtime composition
 
-The coordinator remains strictly bounded:
+`Program` creates the application services, starts the single-instance IPC server, and hands control to `AppController`.
+
+`AppController` is the runtime coordinator. It receives console commands, hotkey callbacks, IPC requests, display changes, and capture events. Background services publish state updates but never write directly to the console.
+
+```text
+Hotkeys / console / IPC
+          │
+          ▼
+    AppController
+          │
+          ▼
+  CaptureCoordinator
+          │
+   ┌──────┴──────┐
+   ▼             ▼
+Full capture   Region capture
+   │             │
+   └──────┬──────┘
+          ▼
+ Capture backend
+          ▼
+ PNG persistence
+          ▼
+Optional clipboard / diagnostics
+```
+
+## Bounded capture pipeline
+
+`CaptureCoordinator` owns one background STA thread. Full and region captures execute on that thread so the hotkey message loop and console loop remain responsive during pixel acquisition, overlay interaction, PNG encoding, disk I/O, and clipboard work.
+
+The queue has a strict upper bound:
 
 ```text
 one active request + one coalesced pending request
 ```
 
-## P7 backend boundary
+When another request arrives while one is already pending, the newest request replaces the previous pending request. The pipeline therefore cannot grow without limit under repeated hotkey input.
 
-`ICaptureBackend` defines:
+Each request receives an immutable settings snapshot. Changing a backend, folder, or option affects future requests only.
 
-- physical desktop capture;
-- frame crop;
-- PNG persistence;
-- backend availability;
-- immutable backend identity.
+## Display topology and DPI
 
-`CaptureFrame` exposes common dimensions and one `Bitmap` view required by the existing WinForms overlay and clipboard integration.
+`DisplayTopologyService` is the single source of physical monitor geometry.
 
-### Reference backend
+The process enables Per-Monitor V2 awareness before any capture or overlay work. Topology snapshots contain:
 
-`ReferenceGdiPlusCaptureBackend` preserves the previous implementation:
+- complete virtual-desktop bounds;
+- monitor bounds and working areas;
+- primary-monitor identity;
+- remote-session state;
+- a monotonically increasing topology version.
+
+This model supports monitors with different scaling factors and monitors positioned at negative coordinates.
+
+Full capture validates the topology version after pixel acquisition and retries once if the display layout changed. Region capture binds one cached frame to one topology version; a topology change closes the overlay and produces no file.
+
+## Capture backend boundary
+
+`ICaptureBackend` defines the operations required by the rest of the application:
+
+- capture a physical desktop rectangle;
+- crop an existing frame;
+- encode a frame as PNG;
+- report availability and backend identity.
+
+`CaptureFrame` exposes dimensions, stride, backend metadata, and a `Bitmap` view used by the WinForms overlay and clipboard integration.
+
+### Reference GDI+
+
+`ReferenceGdiPlusCaptureBackend` provides the compatibility implementation:
 
 - `Bitmap` allocation;
-- `Graphics.CopyFromScreen`;
+- `Graphics.CopyFromScreen` acquisition;
 - GDI+ crop;
 - `Bitmap.Save` PNG persistence.
 
-### Native backend
+### Native GDI + WIC
 
 `NativeGdiWicCaptureBackend` uses:
 
-- top-down `CreateDIBSection` storage;
-- one selected memory device context;
+- a top-down `CreateDIBSection` BGRA buffer;
+- a selected memory device context;
 - `BitBlt` for desktop acquisition and region crop;
-- an opaque BGRA normalization pass;
+- an opaque-alpha normalization pass;
 - direct WIC `WritePixels` PNG encoding.
 
-The WIC path writes the native buffer directly to the system PNG encoder. It does not create an intermediate managed byte array.
+The native encoder writes from the frame buffer without creating an intermediate managed byte array.
 
-## Backend selection
+`CaptureBackendProvider` resolves explicit reference/native modes and `Auto`. When native WIC is unavailable, the provider returns the reference backend with a visible fallback reason.
 
-`CaptureBackendProvider` resolves:
+## Region capture
 
-- `ReferenceGdiPlus`;
-- `NativeGdiWic` with visible fallback when unavailable;
-- `Auto`, which prefers native and falls back to reference.
+`SnippingService` captures the virtual desktop once and passes that cached frame to the overlay.
 
-New settings default to reference. `BackendComparisonBenchmarkService` runs both implementations and persists the recommended explicit mode only after the performance gate succeeds.
+The overlay:
 
-## Display topology consistency
+- spans the complete virtual desktop;
+- uses physical coordinates;
+- dims the cached frame;
+- tracks one rectangular selection;
+- supports cancellation;
+- returns a rectangle relative to the cached frame.
 
-`DisplayTopologyService` remains the single source of physical monitor geometry.
+The selected region is cropped from the original frame. The overlay itself is never recaptured.
 
-Full capture validates the topology version after backend acquisition and retries once if geometry changed.
+## Persistence and clipboard
 
-Region capture associates one backend frame with one topology version. Any topology change closes the overlay and creates no file.
+`CapturePersistenceService` owns the complete file transaction:
+
+1. normalize and validate the configured destination;
+2. fall back to the default folder when necessary;
+3. verify write access and conservative path length;
+4. check available disk space;
+5. encode to a same-directory temporary file;
+6. flush file contents to disk;
+7. rename to a unique final `.png` path;
+8. remove stale temporary files on later use.
+
+Capture backends only encode to the temporary path supplied by the persistence service.
+
+`ClipboardPublicationService` runs on a separate bounded STA dispatcher. It clones the image before queueing and retries transient Windows clipboard failures with a bounded exponential backoff.
+
+A clipboard failure does not invalidate an already committed PNG. Storage fallback and clipboard errors are returned as structured capture warnings.
+
+## Hotkeys and command routing
+
+`HotkeyService` owns the Windows message loop used for global hotkey registration. Reconfiguration is transactional:
+
+1. validate the complete candidate set;
+2. unregister the current set;
+3. register every candidate binding;
+4. restore the previous set if any registration fails;
+5. persist settings only after registration succeeds.
+
+`AppInstanceService` provides current-user named-pipe IPC. A secondary invocation detects the existing instance through the local mutex, forwards one semantic command, and exits. The IPC server only enqueues commands; `AppController` executes them on its controller loop.
+
+## Background lifecycle
+
+`SCapturer.App` is built as `WinExe`, so hidden startup does not flash a console window.
+
+`ConsoleVisibilityService` allocates the console lazily. After the first allocation, normal hide/show operations keep the same process and console attachment and only change window visibility.
+
+The native title-bar close button is different. Windows terminates a console process after `CTRL_CLOSE_EVENT`, even when a handler reports that it handled the event. `ConsoleCloseHandoffService` therefore starts a hidden replacement process, which waits for the closing PID and then enters the normal mutex-controlled startup path.
+
+`AutostartService` manages the current-user Run value and always launches SCapturer with `--background`. It distinguishes disabled, current, stale, and error states.
+
+See [Background and autostart](BACKGROUND_AND_AUTOSTART.md).
 
 ## Console boundary
 
-`ConsoleUi` owns page state, retained selection, prompts, page-aware window titles, and differential terminal rendering. It builds explicit styled spans rather than scanning arbitrary text for keywords, so semantic colors remain bound to known state fields.
+`ConsoleUi` owns:
 
-`AppController` owns a bounded in-memory session event queue used only by the Dashboard. The queue records status, IPC, capture, and display-topology events without becoming a persistent logging dependency.
+- active page and retained selection;
+- keyboard interpretation;
+- blocking text prompts;
+- page-aware window titles;
+- styled frame construction;
+- differential terminal rendering.
 
-The Capture Settings page exposes requested backend mode and actual active backend separately. The Diagnostics page exposes selected-backend baseline and reference/native comparison.
+The UI renders immutable snapshots supplied by `AppController`. Capture, hotkey, display, and benchmark threads request a redraw but never write to the terminal.
 
-Background services never write directly to the terminal.
+A bounded in-memory event queue feeds the Dashboard. It is session-only and does not replace persistent diagnostics.
 
-## Resource boundary
+See [Console UI](CONSOLE_UI.md).
 
-Every `CaptureFrame` is disposed by the capture or snipping service.
+## Diagnostics and benchmarks
 
-The native frame releases managed, GDI, and memory resources in deterministic order. WIC COM objects and file streams are released after each encoder transaction.
+Capture diagnostics are written as JSON Lines when enabled. Benchmark reports are stored separately under the application diagnostics directory.
 
-## P9 persistence boundary
+`BaselineBenchmarkService` measures the currently selected backend. `BackendComparisonBenchmarkService` runs the reference and native implementations under the same workload and applies an explicit recommendation only after the configured gate succeeds.
 
-`CapturePersistenceService` owns destination validation, fallback selection, free-space checks, temporary-file cleanup, encoding transactions, disk flush, and final same-directory rename. Capture backends only encode to the path supplied by this service.
+Normal capture requests are rejected while a benchmark is running so measurements are not mixed with unrelated work.
 
-`ClipboardPublicationService` owns a separate bounded STA dispatcher. It clones the image before queueing and performs exponential retry without allowing clipboard errors to invalidate a committed PNG.
+## Resource ownership
 
-`CaptureResult` can carry structured warnings for storage fallback and clipboard publication. Diagnostics and the console expose these warnings while treating the capture itself as completed.
+Resource lifetime is deterministic:
 
-## GPU research decision
+- capture and snipping services dispose every `CaptureFrame`;
+- native frames release the `Bitmap` view, selected GDI object, bitmap handle, memory device context, and buffer ownership in a fixed order;
+- WIC COM objects and file streams are released after each encoding transaction;
+- clipboard clones are disposed by the dispatcher;
+- the capture worker, hotkey loop, overlay, IPC server, and benchmark tasks participate in graceful shutdown.
 
-P8 remains a conditional research gate. It is deferred unless measured P7 workload data demonstrates that another backend is likely to provide material value.
+These ownership rules are exercised by the external reliability harness.
 
-## P10 lifecycle boundary
+## Verification boundary
 
-`SCapturer.App` is a `WinExe`. `ConsoleVisibilityService` owns console attachment state: background mode allocates no console until management UI is first requested; after that first allocation, hide/show changes only the console window visibility. The process keeps one stable console attachment instead of repeatedly opening and closing standard handles. The SCapturer process and all capture services remain unchanged.
+`SCapturer.Tests` is a dependency-free executable test runner for deterministic logic such as hotkey parsing, settings normalization, launch options, persistence collisions, and pipeline state.
 
-`ConsoleCloseHandoffService` owns the exceptional native-title-bar close path. `AllocConsole` resets the Windows console-control handler table, so `ConsoleVisibilityService` publishes a console-attached event and the handoff service registers again. On `CTRL_CLOSE_EVENT`, it launches a hidden replacement that waits for the closing PID before entering the ordinary mutex-controlled startup path. This is intentionally separate from in-process hide/show because Windows does not allow a console process to cancel close-button termination.
+`SCapturer.Reliability` starts the real application with an isolated instance suffix and data directory, drives production IPC commands, samples Windows process resources, and writes JSON, JSONL, and Markdown evidence under `artifacts\reliability`.
 
-`AppInstanceService` owns a current-user named-pipe server. A secondary invocation discovers the existing process through the local mutex, forwards one semantic command, and exits. The IPC thread only enqueues commands; `AppController` executes them on its controller loop.
+The harness disables global hotkey registration only for its isolated process to avoid conflicts with a normal SCapturer instance. Capture, persistence, console lifecycle, IPC, and graceful shutdown remain production code paths.
 
-`AutostartService` owns the current-user Run value. It reports disabled, current, stale, or error state and always registers the executable with `--background`.
+## Deferred GPU backend
 
-The configurable console hotkey is part of the same transactional registration set as the capture and exit hotkeys.
-
-## P11 reliability boundary
-
-`SCapturer.Tests` validates deterministic logic through a dependency-free executable test runner. The test assembly receives internal visibility from App and Core but is never referenced by production projects.
-
-`SCapturer.Reliability` is an external process harness. It starts the real application with an isolated instance suffix and data directory, drives production IPC commands, samples Windows process resources, and writes immutable JSON/JSONL/Markdown evidence under `artifacts/reliability`.
-
-The harness disables global hotkey registration only for its isolated process to avoid conflicts with a normal user instance. Capture, snipping, persistence, console attachment, named-pipe activation, and graceful shutdown remain production code paths.
-
-P11 introduces no new capture worker and no instrumentation loop inside the shipping application.
+A GPU capture backend is intentionally deferred. It should be reconsidered only if measured workloads show that the existing native path cannot meet a concrete latency, allocation, or compatibility requirement.

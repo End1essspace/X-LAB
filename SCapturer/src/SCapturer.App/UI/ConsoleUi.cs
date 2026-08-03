@@ -629,7 +629,7 @@ internal sealed class ConsoleUi
             new FieldCell("Runtime", ".NET 8", ConsoleColor.Gray)));
         lines.Add(FieldRow(
             width,
-            new FieldCell("Author", "XCON", ConsoleColor.Cyan),
+            new FieldCell("Author", "End1essspace", ConsoleColor.Cyan),
             new FieldCell("Project", "X-LAB", ConsoleColor.DarkCyan)));
         lines.Add(Blank());
         lines.Add(LabelValueLine(
