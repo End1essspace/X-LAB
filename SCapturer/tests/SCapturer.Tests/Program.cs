@@ -1,6 +1,8 @@
+
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 using System.Text.Json;
 using SCapturer.App.Lifecycle;
 using SCapturer.Core.Benchmarking;
@@ -23,6 +25,7 @@ internal static class Program
         {
             ("Hotkey parser round-trip", HotkeyParserRoundTrip),
             ("Hotkey duplicate rejection", HotkeyDuplicateRejection),
+            ("Hotkey startup conflict recovery", HotkeyStartupConflictRecovery),
             ("Settings snapshot deep copy", SettingsSnapshotDeepCopy),
             ("Launch option parsing", LaunchOptionParsing),
             ("Launch option validation", LaunchOptionValidation),
@@ -94,6 +97,65 @@ internal static class Program
 
         Assert.False(HotkeyBindingService.TryValidateSet(set, out var error));
         Assert.Contains("same hotkey", error);
+    }
+
+    private static void HotkeyStartupConflictRecovery()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        const int reservationId = 0x5343;
+        const uint modAlt = 0x0001;
+        const uint modControl = 0x0002;
+        const uint modShift = 0x0004;
+        const uint modNoRepeat = 0x4000;
+        const int vkF21 = 0x84;
+        const int vkF22 = 0x85;
+        const int vkF23 = 0x86;
+        const int vkF24 = 0x87;
+
+        var modifiers = modAlt | modControl | modShift | modNoRepeat;
+        Assert.True(
+            RegisterHotKey(IntPtr.Zero, reservationId, modifiers, vkF24),
+            $"Could not reserve the synthetic conflict hotkey. Windows error " +
+            $"{Marshal.GetLastWin32Error()}.");
+
+        var bindings = new HotkeyBindingSet(
+            CreateTestHotkey(vkF24),
+            CreateTestHotkey(vkF23),
+            CreateTestHotkey(vkF22),
+            CreateTestHotkey(vkF21));
+
+        using var service = new HotkeyService();
+
+        HotkeyRegistrationResult startup;
+        try
+        {
+            startup = service.Start(bindings);
+        }
+        finally
+        {
+            _ = UnregisterHotKey(IntPtr.Zero, reservationId);
+        }
+
+        Assert.False(startup.Success);
+        Assert.Contains("unavailable", startup.ErrorMessage ?? string.Empty);
+
+        var retry = service.TryReconfigure(bindings);
+        Assert.True(retry.Success, retry.ErrorMessage);
+    }
+
+    private static HotkeyBinding CreateTestHotkey(int virtualKey)
+    {
+        return new HotkeyBinding
+        {
+            Control = true,
+            Shift = true,
+            Alt = true,
+            VirtualKey = virtualKey,
+        };
     }
 
     private static void SettingsSnapshotDeepCopy()
@@ -495,6 +557,18 @@ internal static class Program
             throw new IOException("Synthetic encoder failure.");
         }
     }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RegisterHotKey(
+        IntPtr windowHandle,
+        int id,
+        uint modifiers,
+        int virtualKey);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool UnregisterHotKey(IntPtr windowHandle, int id);
 
     private static class Assert
     {

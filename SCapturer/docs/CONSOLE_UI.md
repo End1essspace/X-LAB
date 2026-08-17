@@ -62,6 +62,8 @@ Hotkey updates are transactional:
 
 SCapturer never leaves a partially applied hotkey set active.
 
+The same rule applies at startup. If Windows rejects one configured binding because the chord is already registered by another process, SCapturer does not terminate. It reports the conflict, leaves the global set inactive, and keeps the hotkey message window available so a free replacement binding can be applied without restarting.
+
 ### Save Locations
 
 Provides:
@@ -112,7 +114,7 @@ The page can enable, disable, or repair current-user autostart and can hide the 
 
 ### About
 
-Shows the current version, runtime, capture and storage boundaries, and project identity. The page identifies **XCON** as the author under **X-LAB**.
+Shows the current version, runtime, capture and storage boundaries, and project identity. The page identifies **End1essspace** as the author under **X-LAB**.
 
 ## Navigation
 

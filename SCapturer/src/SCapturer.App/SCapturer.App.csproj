@@ -11,11 +11,11 @@
     <InformationalVersion>0.1.0</InformationalVersion>
 
     <Product>SCapturer</Product>
-    <Authors>XCON</Authors>
+    <Authors>End1essspace</Authors>
     <Company>X-LAB</Company>
     <Title>SCapturer</Title>
     <Description>Performance-first Windows screenshot developer utility.</Description>
-    <Copyright>Copyright © XCON / X-LAB</Copyright>
+    <Copyright>Copyright © End1essspace / X-LAB</Copyright>
   </PropertyGroup>
 
   <ItemGroup>

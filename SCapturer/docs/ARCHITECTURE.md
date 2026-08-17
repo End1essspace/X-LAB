@@ -171,6 +171,8 @@ A clipboard failure does not invalidate an already committed PNG. Storage fallba
 4. restore the previous set if any registration fails;
 5. persist settings only after registration succeeds.
 
+Initial registration uses the same all-or-nothing rule. If Windows rejects a configured binding because another process already owns it, startup remains non-fatal: the partial set is removed, the hotkey message window stays alive, and `AppController` reports the conflict. A later successful reconfiguration can activate the complete set without restarting SCapturer.
+
 `AppInstanceService` provides current-user named-pipe IPC. A secondary invocation detects the existing instance through the local mutex, forwards one semantic command, and exits. The IPC server only enqueues commands; `AppController` executes them on its controller loop.
 
 ## Background lifecycle

@@ -1,3 +1,4 @@
+
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using SCapturer.App.Lifecycle;
@@ -118,9 +119,13 @@ internal sealed class AppController
             _hotkeyService.ExitRequested += RequestExitFromHotkey;
             _hotkeyService.ToggleConsoleRequested += RequestToggleConsoleFromHotkey;
             _hotkeyService.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
-            _hotkeyService.Start(HotkeyBindingService.CreateSet(initialSettings));
+            var registration = _hotkeyService.Start(
+                HotkeyBindingService.CreateSet(initialSettings));
 
-            SetStatus("Listener active · 4 global hotkeys registered.");
+            SetStatus(registration.Success
+                ? "Listener active · 4 global hotkeys registered."
+                : "Global hotkeys inactive. " + registration.ErrorMessage +
+                  " Open Hotkeys and choose a free combination.");
         }
         else
         {

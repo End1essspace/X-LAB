@@ -1,6 +1,6 @@
 # SCapturer
 
-SCapturer is a performance-first Windows screenshot developer utility by **XCON**, built under **X-LAB**, with lossless full-desktop capture, a cached-frame rectangular snipping overlay, configurable global hotkeys, diagnostics, and an interactive console management interface.
+SCapturer is a performance-first Windows screenshot developer utility by **End1essspace**, built under **X-LAB**, with lossless full-desktop capture, a cached-frame rectangular snipping overlay, configurable global hotkeys, diagnostics, and an interactive console management interface.
 
 The application publishes as one C# executable while retaining a reusable Windows capture core. The original Batch/PowerShell proof of concept remains under `legacy/` only as historical reference.
 
@@ -11,7 +11,7 @@ The application publishes as one C# executable while retaining a reusable Window
 - semantic console colors limited to explicit state fields, severity tokens, hotkeys, and selection;
 - fixed-column runtime telemetry, structured last-capture details, and a bounded session event feed;
 - context-aware footer controls and page-aware console-window titles;
-- configurable global hotkeys with rollback;
+- configurable global hotkeys with rollback and non-fatal startup conflict recovery;
 - complete physical virtual-desktop capture;
 - cached-frame rectangular region capture;
 - Per-Monitor V2 and negative-coordinate support;
@@ -49,7 +49,7 @@ The application publishes as one C# executable while retaining a reusable Window
 | `Ctrl + Shift + H` | Show or hide the management console |
 | `Ctrl + Shift + Q` | Exit after active file work finishes |
 
-Hotkeys can be changed from the **Hotkeys** page.
+Hotkeys can be changed from the **Hotkeys** page. If Windows reports that one of the configured global hotkeys is already in use, SCapturer stays running, leaves the global set inactive, and lets the user choose a free binding without restarting the application.
 
 ## Capture backends
 
@@ -236,20 +236,20 @@ Reports are written under `artifacts/reliability`. See [`docs/RELIABILITY.md`](d
 
 ## Release packaging
 
-SCapturer v0.1.0 is packaged as both a portable ZIP and a per-user MSI from the same self-contained single-file `win-x64` publish output. An application icon is intentionally deferred.
+SCapturer v0.1.1 is packaged as both a portable ZIP and a per-user MSI from the same self-contained single-file `win-x64` publish output. An application icon is intentionally deferred.
 
 Build a complete release candidate:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.0
+.\scripts\build-release.ps1 -Version 0.1.1
 ```
 
 Output:
 
 ```text
-dist\release\0.1.0\
-├─ SCapturer-v0.1.0-win-x64-portable.zip
-├─ SCapturer-v0.1.0-win-x64.msi
+dist\release\0.1.1\
+├─ SCapturer-v0.1.1-win-x64-portable.zip
+├─ SCapturer-v0.1.1-win-x64.msi
 ├─ RELEASE_NOTES.md
 └─ SHA256SUMS.txt
 ```
@@ -259,7 +259,7 @@ The MSI installs per-user to `%LOCALAPPDATA%\Programs\X-LAB\SCapturer`, creates 
 To publish only the executable:
 
 ```powershell
-dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -p:PublishProfile=win-x64 -p:Version=0.1.0 -p:AssemblyVersion=0.1.0.0 -p:FileVersion=0.1.0.0 -p:InformationalVersion=0.1.0 -o .\dist\publish\win-x64
+dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -p:PublishProfile=win-x64 -p:Version=0.1.1 -p:AssemblyVersion=0.1.1.0 -p:FileVersion=0.1.1.0 -p:InformationalVersion=0.1.1 -o .\dist\publish\win-x64
 ```
 
 See [`docs/PACKAGING.md`](docs/PACKAGING.md) and [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md).
@@ -281,4 +281,4 @@ See [`docs/PACKAGING.md`](docs/PACKAGING.md) and [`docs/RELEASE_CHECKLIST.md`](d
 - P12 — developer-console telemetry layout, semantic color, event feed, and close-button lifecycle polish: complete;
 - P13 — portable and per-user MSI release packaging: implemented, Windows packaging validation pending.
 
-Created by **XCON** as part of **X-LAB** — practical automation utilities.
+Created by **End1essspace** as part of **X-LAB** — practical automation utilities.

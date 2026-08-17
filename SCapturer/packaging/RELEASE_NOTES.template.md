@@ -2,28 +2,24 @@
 
 Released: {{DATE}}
 
-SCapturer is a performance-first Windows screenshot developer utility by **XCON**, built under **X-LAB**.
+Small reliability patch for global hotkey startup conflicts.
 
-## Highlights
+## Fixed
 
-- full physical virtual-desktop capture;
-- rectangular cached-frame region capture;
-- Reference GDI+ and Native GDI + WIC backends;
-- atomic PNG persistence and hardened clipboard publication;
-- configurable global hotkeys;
-- background operation and single-instance activation;
-- developer console telemetry, diagnostics, benchmarks, and reliability gates;
-- portable win-x64 package and per-user MSI installer.
+- SCapturer no longer terminates when a configured global hotkey is already registered by another process.
+- Failed startup registration remains all-or-nothing; no partial hotkey set is left active.
+- The hotkey message window stays available after a conflict, so a free binding can be applied from the **Hotkeys** page without restarting SCapturer.
+- Added automated coverage for startup conflict recovery.
 
-## Installation
+Capture behavior, storage, backends, and packaging layout are unchanged from v0.1.0.
 
-Use either:
+## Downloads
 
-- `SCapturer-v{{VERSION}}-win-x64-portable.zip` for a portable deployment;
-- `SCapturer-v{{VERSION}}-win-x64.msi` for a per-user installation.
+- `SCapturer-v{{VERSION}}-win-x64-portable.zip`
+- `SCapturer-v{{VERSION}}-win-x64.msi`
 
-The MSI installs to `%LOCALAPPDATA%\Programs\X-LAB\SCapturer` and creates a Start Menu shortcut. Windows autostart remains opt-in from inside SCapturer.
+`SHA256SUMS.txt` contains checksums for both distributable files.
 
-## Upgrade and uninstall
+## Upgrade
 
-The MSI requests graceful shutdown before repair, upgrade, or uninstall. Uninstall removes the application, Start Menu shortcut, and SCapturer autostart registration. It preserves screenshots, settings, and diagnostics.
+The MSI performs the existing per-user major-upgrade flow and preserves screenshots, settings, diagnostics, and the current autostart preference.

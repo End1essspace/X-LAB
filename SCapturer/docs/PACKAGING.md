@@ -9,13 +9,13 @@ Both packages contain the same self-contained single-file `SCapturer.exe`.
 
 ## Release identity
 
-Default first packaged release:
+Current patch release:
 
 ```text
 Product        SCapturer
 Publisher      X-LAB
-Author         XCON
-Version        0.1.0
+Author         End1essspace
+Version        0.1.1
 Architecture   win-x64
 Target         .NET 8 self-contained
 ```
@@ -35,7 +35,7 @@ The produced EXE is self-contained; target computers do not need a separately in
 Run from the repository root:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.0
+.\scripts\build-release.ps1 -Version 0.1.1
 ```
 
 The script performs:
@@ -54,11 +54,11 @@ The script performs:
 Optional development switches:
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.0 -SkipReliability
+.\scripts\build-release.ps1 -Version 0.1.1 -SkipReliability
 ```
 
 ```powershell
-.\scripts\build-release.ps1 -Version 0.1.0 -SkipMsi
+.\scripts\build-release.ps1 -Version 0.1.1 -SkipMsi
 ```
 
 These switches are intended for local iteration. A release candidate should be built without skips.
@@ -66,9 +66,9 @@ These switches are intended for local iteration. A release candidate should be b
 ## Output
 
 ```text
-dist\release\0.1.0\
-├─ SCapturer-v0.1.0-win-x64-portable.zip
-├─ SCapturer-v0.1.0-win-x64.msi
+dist\release\0.1.1\
+├─ SCapturer-v0.1.1-win-x64-portable.zip
+├─ SCapturer-v0.1.1-win-x64.msi
 ├─ RELEASE_NOTES.md
 └─ SHA256SUMS.txt
 ```
@@ -206,7 +206,7 @@ Screenshots and application data are user-owned and must not be silently deleted
 To produce only the self-contained executable:
 
 ```powershell
-dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -p:PublishProfile=win-x64 -p:Version=0.1.0 -p:AssemblyVersion=0.1.0.0 -p:FileVersion=0.1.0.0 -p:InformationalVersion=0.1.0 -o .\dist\publish\win-x64
+dotnet publish .\src\SCapturer.App\SCapturer.App.csproj -p:PublishProfile=win-x64 -p:Version=0.1.1 -p:AssemblyVersion=0.1.1.0 -p:FileVersion=0.1.1.0 -p:InformationalVersion=0.1.1 -o .\dist\publish\win-x64
 ```
 
 ## Packaging acceptance

@@ -40,6 +40,8 @@ Ctrl + Shift + H
 
 It can be changed from the **Hotkeys** page and is registered in the same all-or-nothing transaction as the capture and exit hotkeys.
 
+If any configured global hotkey is already owned by another process during startup, SCapturer continues running but keeps the complete global set inactive. The user can show the console, choose a free binding on the **Hotkeys** page, and activate the full set without restarting the process.
+
 The management loop checks for input every 40 ms while the console is visible and every 200 ms while it is hidden. Capture, hotkey, display, clipboard, and IPC work remains event-driven.
 
 ## Closing the native console window

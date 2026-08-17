@@ -24,7 +24,7 @@
 
     <MediaTemplate EmbedCab="yes" />
 
-    <Property Id="ARPCOMMENTS" Value="Performance-first Windows screenshot developer utility by XCON / X-LAB." />
+    <Property Id="ARPCOMMENTS" Value="Performance-first Windows screenshot developer utility by End1essspace / X-LAB." />
     <Property Id="DISABLEADVTSHORTCUTS" Value="1" />
 
     <Directory Id="TARGETDIR" Name="SourceDir">

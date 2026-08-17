@@ -2,7 +2,7 @@ SCapturer v{{VERSION}}
 ====================
 
 Performance-first Windows screenshot developer utility.
-Created by XCON as part of X-LAB.
+Created by End1essspace as part of X-LAB.
 
 RUN
 ---
@@ -17,6 +17,9 @@ Ctrl+Shift+G  Capture the complete virtual desktop
 Ctrl+Shift+S  Capture a selected rectangular region
 Ctrl+Shift+H  Show or hide the management console
 Ctrl+Shift+Q  Exit SCapturer gracefully
+
+If a configured hotkey is already in use by another program, SCapturer stays
+running. Open Hotkeys and choose a free combination; no restart is required.
 
 DATA
 ----

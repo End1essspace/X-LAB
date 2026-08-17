@@ -1,3 +1,4 @@
+
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing;
@@ -12,6 +13,7 @@ public sealed class HotkeyService : IDisposable
     private readonly ManualResetEventSlim _startupCompleted = new(false);
     private Thread? _messageThread;
     private HotkeyWindow? _window;
+    private HotkeyRegistrationResult? _startupRegistrationResult;
     private Exception? _startupException;
     private bool _disposed;
 
@@ -25,30 +27,28 @@ public sealed class HotkeyService : IDisposable
 
     public event Action? DisplayConfigurationChanged;
 
-    public void Start(HotkeyBindingSet bindings)
+    public HotkeyRegistrationResult Start(HotkeyBindingSet bindings)
     {
         ArgumentNullException.ThrowIfNull(bindings);
         ObjectDisposedException.ThrowIf(_disposed, this);
 
-        if (_messageThread is not null)
+        if (_messageThread is null)
         {
-            return;
+            if (!HotkeyBindingService.TryValidateSet(bindings, out var validationError))
+            {
+                throw new ArgumentException(validationError, nameof(bindings));
+            }
+
+            var initialBindings = bindings.CreateSnapshot();
+
+            _messageThread = new Thread(() => RunMessageLoop(initialBindings))
+            {
+                IsBackground = true,
+                Name = "SCapturer Hotkey Message Loop",
+            };
+            _messageThread.SetApartmentState(ApartmentState.STA);
+            _messageThread.Start();
         }
-
-        if (!HotkeyBindingService.TryValidateSet(bindings, out var validationError))
-        {
-            throw new ArgumentException(validationError, nameof(bindings));
-        }
-
-        var initialBindings = bindings.CreateSnapshot();
-
-        _messageThread = new Thread(() => RunMessageLoop(initialBindings))
-        {
-            IsBackground = true,
-            Name = "SCapturer Hotkey Message Loop",
-        };
-        _messageThread.SetApartmentState(ApartmentState.STA);
-        _messageThread.Start();
 
         if (!_startupCompleted.Wait(TimeSpan.FromSeconds(5)))
         {
@@ -58,9 +58,13 @@ public sealed class HotkeyService : IDisposable
         if (_startupException is not null)
         {
             throw new InvalidOperationException(
-                "Could not register the global hotkeys.",
+                "Could not start the global hotkey listener.",
                 _startupException);
         }
+
+        return _startupRegistrationResult
+            ?? throw new InvalidOperationException(
+                "The global hotkey listener did not report its registration state.");
     }
 
     public HotkeyRegistrationResult TryReconfigure(HotkeyBindingSet bindings)
@@ -113,8 +117,9 @@ public sealed class HotkeyService : IDisposable
         {
             _window = new HotkeyWindow(
                 initialBindings,
-                onReady: error =>
+                onReady: (registration, error) =>
                 {
+                    _startupRegistrationResult = registration;
                     _startupException = error;
                     _startupCompleted.Set();
                 },
@@ -174,7 +179,7 @@ public sealed class HotkeyService : IDisposable
         private const int ToggleConsoleHotkeyId = 4;
 
         private readonly HotkeyBindingSet _initialBindings;
-        private readonly Action<Exception?> _onReady;
+        private readonly Action<HotkeyRegistrationResult?, Exception?> _onReady;
         private readonly Action _onFullCapture;
         private readonly Action _onRegionCapture;
         private readonly Action _onExit;
@@ -189,7 +194,7 @@ public sealed class HotkeyService : IDisposable
 
         public HotkeyWindow(
             HotkeyBindingSet initialBindings,
-            Action<Exception?> onReady,
+            Action<HotkeyRegistrationResult?, Exception?> onReady,
             Action onFullCapture,
             Action onRegionCapture,
             Action onExit,
@@ -219,18 +224,26 @@ public sealed class HotkeyService : IDisposable
             try
             {
                 var result = RegisterBindingSet(_initialBindings);
-                if (!result.Success)
+                if (result.Success)
                 {
-                    throw new InvalidOperationException(result.ErrorMessage);
+                    _currentBindings = _initialBindings.CreateSnapshot();
+                }
+                else
+                {
+                    // Keep the message window alive so the user can replace an
+                    // occupied startup binding without restarting SCapturer.
+                    UnregisterAll();
+                    _currentBindings = null;
                 }
 
-                _currentBindings = _initialBindings.CreateSnapshot();
                 Hide();
-                _onReady(null);
+                _onReady(result, null);
             }
             catch (Exception exception)
             {
-                _onReady(exception);
+                UnregisterAll();
+                _currentBindings = null;
+                _onReady(null, exception);
                 Close();
             }
         }

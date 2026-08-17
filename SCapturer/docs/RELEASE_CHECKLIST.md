@@ -3,11 +3,19 @@
 ## Source gate
 
 - [ ] repository is clean;
-- [ ] version is `major.minor.patch`;
+- [ ] release version is `0.1.1` and follows `major.minor.patch`;
 - [ ] Release build has zero warnings and zero errors;
 - [ ] automated tests pass;
 - [ ] full reliability gate passes;
 - [ ] release notes describe the current version.
+
+## v0.1.1 hotkey regression
+
+- [ ] occupy one configured global hotkey before launching SCapturer;
+- [ ] SCapturer stays running and reports the registration conflict instead of terminating;
+- [ ] no partial global hotkey set remains active after the failed startup registration;
+- [ ] change the conflicting binding to a free chord from the **Hotkeys** page;
+- [ ] the complete hotkey set activates without restarting SCapturer.
 
 ## Artifact gate
 
