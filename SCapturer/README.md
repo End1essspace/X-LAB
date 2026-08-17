@@ -4,6 +4,17 @@ SCapturer is a performance-first Windows screenshot developer utility by **End1e
 
 The application publishes as one C# executable while retaining a reusable Windows capture core. The original Batch/PowerShell proof of concept remains under `legacy/` only as historical reference.
 
+
+## Latest release — v0.1.1
+
+v0.1.1 is a small reliability patch for global hotkey startup conflicts.
+
+- SCapturer no longer exits when a configured global hotkey is already occupied by another application;
+- a failed startup registration leaves the global hotkey set inactive instead of partially registered;
+- the user can choose a free binding from the **Hotkeys** page and recover without restarting SCapturer;
+- automated coverage now includes startup hotkey conflict recovery.
+
+
 ## Current capabilities
 
 - interactive page-based console UI;
@@ -218,7 +229,7 @@ dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release
 
 ## Automated verification
 
-Run deterministic logic tests:
+Run the deterministic logic test suite (currently 15 cases):
 
 ```powershell
 dotnet run --project .\tests\SCapturer.Tests\SCapturer.Tests.csproj -c Release
@@ -279,6 +290,6 @@ See [`docs/PACKAGING.md`](docs/PACKAGING.md) and [`docs/RELEASE_CHECKLIST.md`](d
 - P10 — background lifecycle and Windows autostart: complete;
 - P11 — automated reliability tests and resource-soak validation: complete;
 - P12 — developer-console telemetry layout, semantic color, event feed, and close-button lifecycle polish: complete;
-- P13 — portable and per-user MSI release packaging: implemented, Windows packaging validation pending.
+- P13 — portable and per-user MSI release packaging: complete.
 
 Created by **End1essspace** as part of **X-LAB** — practical automation utilities.
