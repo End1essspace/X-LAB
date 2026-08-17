@@ -11,11 +11,16 @@
 
 ## v0.1.1 hotkey regression
 
-- [ ] occupy one configured global hotkey before launching SCapturer;
-- [ ] SCapturer stays running and reports the registration conflict instead of terminating;
+- [ ] occupy two configured global hotkeys before launching SCapturer;
+- [ ] SCapturer stays running and reports the first registration conflict instead of terminating;
 - [ ] no partial global hotkey set remains active after the failed startup registration;
-- [ ] change the conflicting binding to a free chord from the **Hotkeys** page;
-- [ ] the complete hotkey set activates without restarting SCapturer.
+- [ ] edit the first conflicting binding by pressing a new chord directly in the **Hotkeys** page;
+- [ ] the first replacement is saved and displayed even though the second configured binding is still unavailable;
+- [ ] global hotkeys remain inactive while any configured conflict remains;
+- [ ] edit the second conflicting binding to a free chord without restarting SCapturer;
+- [ ] the complete four-hotkey set activates automatically after the final conflict is removed;
+- [ ] with an active set, attempting to assign an occupied chord is rejected and the previous working set remains active;
+- [ ] unmodified `Esc` cancels hotkey capture without changing settings.
 
 ## Artifact gate
 
@@ -87,3 +92,13 @@
 - [ ] `%LOCALAPPDATA%\SCapturer\config.json` remains;
 - [ ] diagnostics remain;
 - [ ] reinstall loads the preserved configuration.
+
+## Silent reinstall validation
+
+- [ ] build the final `0.1.1` release without skip switches;
+- [ ] silent MSI uninstall completes with exit code `0` or `3010`;
+- [ ] silent MSI install completes with exit code `0` or `3010`;
+- [ ] no installer UI or restart prompt is shown;
+- [ ] preserved `%LOCALAPPDATA%\SCapturer\config.json` is loaded after reinstall;
+- [ ] screenshots and diagnostics remain untouched;
+- [ ] autostart remains disabled after a true uninstall/reinstall until explicitly enabled again.

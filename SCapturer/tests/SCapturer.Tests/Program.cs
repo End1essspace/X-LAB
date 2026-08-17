@@ -1,4 +1,3 @@
-
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
@@ -26,6 +25,7 @@ internal static class Program
             ("Hotkey parser round-trip", HotkeyParserRoundTrip),
             ("Hotkey duplicate rejection", HotkeyDuplicateRejection),
             ("Hotkey startup conflict recovery", HotkeyStartupConflictRecovery),
+            ("Hotkey staged multi-conflict recovery", HotkeyStagedMultiConflictRecovery),
             ("Settings snapshot deep copy", SettingsSnapshotDeepCopy),
             ("Launch option parsing", LaunchOptionParsing),
             ("Launch option validation", LaunchOptionValidation),
@@ -145,6 +145,93 @@ internal static class Program
 
         var retry = service.TryReconfigure(bindings);
         Assert.True(retry.Success, retry.ErrorMessage);
+    }
+
+    private static void HotkeyStagedMultiConflictRecovery()
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        const int fullReservationId = 0x5344;
+        const int regionReservationId = 0x5345;
+        const uint modAlt = 0x0001;
+        const uint modControl = 0x0002;
+        const uint modShift = 0x0004;
+        const uint modNoRepeat = 0x4000;
+        const int vkF20 = 0x83;
+        const int vkF21 = 0x84;
+        const int vkF22 = 0x85;
+        const int vkF23 = 0x86;
+        const int vkF24 = 0x87;
+
+        var modifiers = modAlt | modControl | modShift | modNoRepeat;
+        var fullReserved = false;
+        var regionReserved = false;
+
+        try
+        {
+            fullReserved = RegisterHotKey(
+                IntPtr.Zero,
+                fullReservationId,
+                modifiers,
+                vkF24);
+            Assert.True(
+                fullReserved,
+                $"Could not reserve the synthetic full-capture conflict. Windows error " +
+                $"{Marshal.GetLastWin32Error()}.");
+
+            regionReserved = RegisterHotKey(
+                IntPtr.Zero,
+                regionReservationId,
+                modifiers,
+                vkF23);
+            Assert.True(
+                regionReserved,
+                $"Could not reserve the synthetic region-capture conflict. Windows error " +
+                $"{Marshal.GetLastWin32Error()}.");
+
+            var initial = new HotkeyBindingSet(
+                CreateTestHotkey(vkF24),
+                CreateTestHotkey(vkF23),
+                CreateTestHotkey(vkF22),
+                CreateTestHotkey(vkF21));
+
+            using var service = new HotkeyService();
+            var startup = service.Start(initial);
+
+            Assert.False(startup.Success);
+            Assert.Contains("unavailable", startup.ErrorMessage ?? string.Empty);
+
+            var staged = new HotkeyBindingSet(
+                CreateTestHotkey(vkF20),
+                CreateTestHotkey(vkF23),
+                CreateTestHotkey(vkF22),
+                CreateTestHotkey(vkF21));
+
+            var firstRepair = service.TryReconfigure(staged);
+            Assert.False(firstRepair.Success);
+            Assert.Contains("region capture", firstRepair.ErrorMessage ?? string.Empty);
+
+            _ = UnregisterHotKey(IntPtr.Zero, regionReservationId);
+            regionReserved = false;
+
+            var secondRepair = service.TryReconfigure(staged);
+            Assert.True(secondRepair.Success, secondRepair.ErrorMessage);
+        }
+        finally
+        {
+            if (regionReserved)
+            {
+                _ = UnregisterHotKey(IntPtr.Zero, regionReservationId);
+            }
+
+            if (fullReserved)
+            {
+                _ = UnregisterHotKey(IntPtr.Zero, fullReservationId);
+            }
+        }
     }
 
     private static HotkeyBinding CreateTestHotkey(int virtualKey)
@@ -659,3 +746,4 @@ internal static class Program
         }
     }
 }
+

@@ -1,4 +1,5 @@
 using System.Reflection;
+using System.Runtime.InteropServices;
 using SCapturer.Core.Capture;
 using SCapturer.Core.Models;
 using SCapturer.Core.Pipeline;
@@ -127,6 +128,92 @@ internal sealed class ConsoleUi
     {
         TrySetWindowTitle();
         RenderDiff(BuildFrame(model));
+    }
+
+    public HotkeyBinding? PromptForHotkey(
+        string title,
+        HotkeyBinding currentBinding)
+    {
+        ArgumentNullException.ThrowIfNull(currentBinding);
+        PreparePrompt();
+
+        var previousTreatControlCAsInput = Console.TreatControlCAsInput;
+
+        try
+        {
+            Console.TreatControlCAsInput = true;
+            Console.ForegroundColor = ConsoleColor.Cyan;
+            Console.WriteLine(title);
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine(new string(
+                '─',
+                Math.Min(78, Math.Max(20, SafeWindowWidth() - 1))));
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.Write("Current   ");
+            Console.ForegroundColor = ConsoleColor.Gray;
+            Console.WriteLine(HotkeyBindingService.Format(currentBinding));
+            Console.WriteLine();
+            Console.ForegroundColor = ConsoleColor.Gray;
+            Console.WriteLine(
+                "Press the new shortcut now. Hold Ctrl, Shift, Alt, or Win and press one key.");
+            Console.ForegroundColor = ConsoleColor.DarkGray;
+            Console.WriteLine("Press Esc by itself to cancel.");
+            Console.WriteLine();
+
+            while (true)
+            {
+                Console.ForegroundColor = ConsoleColor.Cyan;
+                Console.Write("Waiting   > ");
+                Console.ForegroundColor = ConsoleColor.White;
+
+                var key = Console.ReadKey(intercept: true);
+                var windows = IsVirtualKeyDown(0x5B) || IsVirtualKeyDown(0x5C);
+                var control = key.Modifiers.HasFlag(ConsoleModifiers.Control);
+                var shift = key.Modifiers.HasFlag(ConsoleModifiers.Shift);
+                var alt = key.Modifiers.HasFlag(ConsoleModifiers.Alt);
+
+                if (key.Key == ConsoleKey.Escape &&
+                    !control &&
+                    !shift &&
+                    !alt &&
+                    !windows)
+                {
+                    Console.WriteLine("cancelled");
+                    return null;
+                }
+
+                var binding = new HotkeyBinding
+                {
+                    Control = control,
+                    Shift = shift,
+                    Alt = alt,
+                    Windows = windows,
+                    VirtualKey = (int)key.Key,
+                };
+
+                if (!HotkeyBindingService.TryValidate(binding, out var validationError))
+                {
+                    Console.ForegroundColor = ConsoleColor.Yellow;
+                    Console.WriteLine("invalid");
+                    Console.ForegroundColor = ConsoleColor.DarkGray;
+                    Console.WriteLine(validationError);
+                    Console.WriteLine();
+                    continue;
+                }
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(HotkeyBindingService.Format(binding));
+                return binding;
+            }
+        }
+        finally
+        {
+            Console.TreatControlCAsInput = previousTreatControlCAsInput;
+            Console.ResetColor();
+            TrySetCursorVisible(false);
+            _forceFullRedraw = true;
+            _lastRenderedLines = Array.Empty<StyledConsoleLine>();
+        }
     }
 
     public string? PromptForText(
@@ -1552,6 +1639,14 @@ internal sealed class ConsoleUi
         }
     }
 
+    private static bool IsVirtualKeyDown(int virtualKey)
+    {
+        return (GetAsyncKeyState(virtualKey) & 0x8000) != 0;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern short GetAsyncKeyState(int virtualKey);
+
     private static void TrySetCursorVisible(bool visible)
     {
         try
@@ -1600,3 +1695,4 @@ internal sealed class ConsoleUi
         }
     }
 }
+

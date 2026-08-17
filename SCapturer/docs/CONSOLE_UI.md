@@ -40,29 +40,20 @@ Provides bindings for:
 - graceful exit;
 - restoring defaults.
 
-Bindings are entered as text and must contain at least one modifier and one primary key.
+To change a binding, select it, press `Enter`, then press the desired shortcut. The chord must contain at least one modifier (`Ctrl`, `Shift`, `Alt`, or `Win`) and one primary key. `Esc` by itself cancels the capture. The user does not type a textual chord.
 
-Examples:
+When the global hotkey set is currently active, updates are transactional:
 
-```text
-Ctrl+Shift+G
-Ctrl+Alt+PrintScreen
-Win+Shift+S
-Alt+F10
-```
-
-Hotkey updates are transactional:
-
-1. parse and normalize the requested chord;
+1. validate the complete candidate set;
 2. reject duplicates inside the SCapturer binding set;
 3. unregister the current set on the hotkey STA thread;
 4. register the complete candidate set with Windows;
 5. persist settings only after registration succeeds;
-6. restore the previous set if registration fails.
+6. restore the previous complete set if registration fails.
 
 SCapturer never leaves a partially applied hotkey set active.
 
-The same rule applies at startup. If Windows rejects one configured binding because the chord is already registered by another process, SCapturer does not terminate. It reports the conflict, leaves the global set inactive, and keeps the hotkey message window available so a free replacement binding can be applied without restarting.
+Startup uses the same all-or-nothing registration rule. If Windows rejects one or more configured bindings because another process already owns them, SCapturer stays running and leaves the global set inactive. Recovery then becomes staged: every valid replacement is persisted before another complete-set registration attempt. If a second conflict still exists, the repaired binding remains saved and visible while global hotkeys remain inactive. The user can continue replacing unavailable bindings one at a time, and the complete set activates automatically after the final conflict is removed.
 
 ### Save Locations
 
@@ -225,16 +216,13 @@ Examples:
 
 The Dashboard shows the warning count, the status line shows the current message, and diagnostics store structured warnings when enabled.
 
-## Text prompts
+## Prompt input
 
-Hotkey and folder edits use a dedicated prompt view showing:
+Folder edits use a text prompt showing the current value, input guidance, and an empty-input cancellation path.
 
-- prompt title;
-- current value;
-- input guidance;
-- an empty-input cancellation path.
+Hotkey edits use a dedicated chord-capture prompt. It shows the current binding, waits for one modified keypress, recognizes `Ctrl`, `Shift`, `Alt`, and `Win`, validates the resulting binding, and uses unmodified `Esc` as cancellation. Invalid keypresses remain in the prompt until a valid chord is captured or the operation is cancelled.
 
-After input completes, the previous page is invalidated and redrawn from current state.
+After either prompt completes, the previous page is invalidated and redrawn from current state.
 
 ## Hidden-console behavior
 

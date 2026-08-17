@@ -18,8 +18,13 @@ Ctrl+Shift+S  Capture a selected rectangular region
 Ctrl+Shift+H  Show or hide the management console
 Ctrl+Shift+Q  Exit SCapturer gracefully
 
-If a configured hotkey is already in use by another program, SCapturer stays
-running. Open Hotkeys and choose a free combination; no restart is required.
+To change a hotkey, open Hotkeys, select the binding, press Enter, then press
+the new shortcut. Esc by itself cancels the capture.
+
+If one or more configured hotkeys are already in use by another program,
+SCapturer stays running. Valid replacements are saved one at a time while the
+global set remains inactive. The complete set activates automatically after
+the final conflict is removed; no restart is required.
 
 DATA
 ----

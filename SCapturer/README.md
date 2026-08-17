@@ -7,12 +7,14 @@ The application publishes as one C# executable while retaining a reusable Window
 
 ## Latest release — v0.1.1
 
-v0.1.1 is a small reliability patch for global hotkey startup conflicts.
+v0.1.1 is a reliability patch for global hotkey conflicts and recovery.
 
 - SCapturer no longer exits when a configured global hotkey is already occupied by another application;
-- a failed startup registration leaves the global hotkey set inactive instead of partially registered;
-- the user can choose a free binding from the **Hotkeys** page and recover without restarting SCapturer;
-- automated coverage now includes startup hotkey conflict recovery.
+- failed startup registration remains all-or-nothing, so no partial global hotkey set is left active;
+- the **Hotkeys** page captures a replacement shortcut directly from the keyboard instead of requiring the chord to be typed as text;
+- when startup has left the global set inactive, valid replacements are saved one at a time even if another configured binding is still occupied;
+- SCapturer retries the complete desired set after every repair and activates all four hotkeys automatically as soon as the final conflict is removed;
+- automated coverage includes both single-conflict and staged multi-conflict recovery.
 
 
 ## Current capabilities
@@ -22,7 +24,7 @@ v0.1.1 is a small reliability patch for global hotkey startup conflicts.
 - semantic console colors limited to explicit state fields, severity tokens, hotkeys, and selection;
 - fixed-column runtime telemetry, structured last-capture details, and a bounded session event feed;
 - context-aware footer controls and page-aware console-window titles;
-- configurable global hotkeys with rollback and non-fatal startup conflict recovery;
+- configurable global hotkeys with direct chord capture, transactional rollback, and staged non-fatal conflict recovery;
 - complete physical virtual-desktop capture;
 - cached-frame rectangular region capture;
 - Per-Monitor V2 and negative-coordinate support;
@@ -60,7 +62,7 @@ v0.1.1 is a small reliability patch for global hotkey startup conflicts.
 | `Ctrl + Shift + H` | Show or hide the management console |
 | `Ctrl + Shift + Q` | Exit after active file work finishes |
 
-Hotkeys can be changed from the **Hotkeys** page. If Windows reports that one of the configured global hotkeys is already in use, SCapturer stays running, leaves the global set inactive, and lets the user choose a free binding without restarting the application.
+Hotkeys can be changed from the **Hotkeys** page by selecting a binding, pressing `Enter`, and then pressing the new shortcut. `Esc` by itself cancels the capture. If Windows reports that one or more configured global hotkeys are already in use, SCapturer stays running and keeps the global set inactive. Each valid replacement is persisted immediately, so multiple conflicts can be repaired one at a time; the complete set is registered automatically when every configured chord is available.
 
 ## Capture backends
 
@@ -229,7 +231,7 @@ dotnet run --project .\src\SCapturer.App\SCapturer.App.csproj -c Release
 
 ## Automated verification
 
-Run the deterministic logic test suite (currently 15 cases):
+Run the deterministic logic test suite (currently 16 cases):
 
 ```powershell
 dotnet run --project .\tests\SCapturer.Tests\SCapturer.Tests.csproj -c Release

@@ -21,9 +21,9 @@ Run:
 dotnet run --project .\tests\SCapturer.Tests\SCapturer.Tests.csproj -c Release
 ```
 
-The executable returns `0` only when every case passes. Coverage includes:
+The executable currently contains 16 cases and returns `0` only when every case passes. Coverage includes:
 
-- hotkey parsing, formatting, validation, and duplicate rejection;
+- hotkey parsing, formatting, validation, duplicate rejection, non-fatal startup conflict recovery, and staged multi-conflict recovery;
 - settings snapshots, normalization, invalid-file backup, and isolated paths;
 - command-line lifecycle parsing;
 - benchmark median and p95 calculations;

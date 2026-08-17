@@ -1,4 +1,3 @@
-
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using SCapturer.App.Lifecycle;
@@ -45,6 +44,7 @@ internal sealed class AppController
     private AutostartStatus _autostartStatus;
     private Task? _benchmarkTask;
     private string _statusMessage = "Ready.";
+    private bool _hotkeysActive;
     private int _benchmarkInProgress;
     private int _renderRequested = 1;
 
@@ -121,6 +121,7 @@ internal sealed class AppController
             _hotkeyService.DisplayConfigurationChanged += OnHotkeyDisplayConfigurationChanged;
             var registration = _hotkeyService.Start(
                 HotkeyBindingService.CreateSet(initialSettings));
+            _hotkeysActive = registration.Success;
 
             SetStatus(registration.Success
                 ? "Listener active · 4 global hotkeys registered."
@@ -546,34 +547,24 @@ internal sealed class AppController
         var currentBinding = GetHotkey(currentSettings, action);
         var actionName = HotkeyActionName(action);
 
-        var entered = _consoleUi.PromptForText(
+        var captured = _consoleUi.PromptForHotkey(
             $"CHANGE {actionName.ToUpperInvariant()} HOTKEY",
-            HotkeyBindingService.Format(currentBinding),
-            "Type a combination with at least one modifier, such as Ctrl+Alt+G.");
+            currentBinding);
 
         RequestRender();
 
-        if (string.IsNullOrWhiteSpace(entered))
+        if (captured is null)
         {
             SetStatus("Hotkey change cancelled.");
             return;
         }
 
-        if (!HotkeyBindingService.TryParse(
-                entered,
-                out var parsed,
-                out var parseError))
-        {
-            SetStatus($"Invalid hotkey: {parseError}");
-            return;
-        }
-
         var candidate = currentSettings.CreateSnapshot();
-        SetHotkey(candidate, action, parsed);
+        SetHotkey(candidate, action, captured);
 
         ApplyHotkeySettings(
             candidate,
-            $"{actionName} hotkey changed to {HotkeyBindingService.Format(parsed)}.");
+            $"{actionName} hotkey changed to {HotkeyBindingService.Format(captured)}.");
     }
 
     private void RestoreDefaultHotkeys()
@@ -600,6 +591,52 @@ internal sealed class AppController
             return;
         }
 
+        if (!_globalHotkeysEnabled)
+        {
+            try
+            {
+                PersistHotkeySettings(candidate);
+                SetStatus(
+                    successMessage +
+                    " Global hotkeys are disabled for this process and will be " +
+                    "registered on the next normal launch.");
+            }
+            catch (Exception exception)
+            {
+                SetStatus($"Could not persist hotkeys: {exception.Message}");
+            }
+
+            return;
+        }
+
+        if (!_hotkeysActive)
+        {
+            // Startup registration is all-or-nothing. While the listener is
+            // inactive, persist each valid edit first so multiple occupied
+            // bindings can be repaired one at a time. Each edit then retries
+            // registration of the complete desired set.
+            try
+            {
+                PersistHotkeySettings(candidate);
+            }
+            catch (Exception exception)
+            {
+                SetStatus($"Could not persist hotkeys: {exception.Message}");
+                return;
+            }
+
+            var recoveryRegistration = _hotkeyService.TryReconfigure(bindings);
+            _hotkeysActive = recoveryRegistration.Success;
+
+            SetStatus(recoveryRegistration.Success
+                ? successMessage
+                : successMessage +
+                  " Global hotkeys remain inactive: " +
+                  recoveryRegistration.ErrorMessage +
+                  " Continue replacing unavailable bindings.");
+            return;
+        }
+
         var registration = _hotkeyService.TryReconfigure(bindings);
         if (!registration.Success)
         {
@@ -609,29 +646,35 @@ internal sealed class AppController
 
         try
         {
-            _settingsStore.Save(candidate);
-
-            lock (_uiStateGate)
-            {
-                _settings.FullCaptureHotkey = candidate.FullCaptureHotkey.CreateSnapshot();
-                _settings.RegionCaptureHotkey = candidate.RegionCaptureHotkey.CreateSnapshot();
-                _settings.ExitHotkey = candidate.ExitHotkey.CreateSnapshot();
-                _settings.ToggleConsoleHotkey =
-                    candidate.ToggleConsoleHotkey.CreateSnapshot();
-            }
-
+            PersistHotkeySettings(candidate);
+            _hotkeysActive = true;
             SetStatus(successMessage);
         }
         catch (Exception exception)
         {
             var rollback = _hotkeyService.TryReconfigure(
                 HotkeyBindingService.CreateSet(previous));
+            _hotkeysActive = rollback.Success;
 
             SetStatus(
                 rollback.Success
                     ? $"Could not persist hotkeys; previous bindings restored: {exception.Message}"
                     : $"Could not persist hotkeys and rollback failed: {exception.Message}. " +
                       rollback.ErrorMessage);
+        }
+    }
+
+    private void PersistHotkeySettings(AppSettings candidate)
+    {
+        _settingsStore.Save(candidate);
+
+        lock (_uiStateGate)
+        {
+            _settings.FullCaptureHotkey = candidate.FullCaptureHotkey.CreateSnapshot();
+            _settings.RegionCaptureHotkey = candidate.RegionCaptureHotkey.CreateSnapshot();
+            _settings.ExitHotkey = candidate.ExitHotkey.CreateSnapshot();
+            _settings.ToggleConsoleHotkey =
+                candidate.ToggleConsoleHotkey.CreateSnapshot();
         }
     }
 
@@ -1283,3 +1326,4 @@ internal sealed class AppController
         return $"{value:0.##} {units[unitIndex]}";
     }
 }
+

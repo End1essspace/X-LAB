@@ -163,15 +163,19 @@ A clipboard failure does not invalidate an already committed PNG. Storage fallba
 
 ## Hotkeys and command routing
 
-`HotkeyService` owns the Windows message loop used for global hotkey registration. Reconfiguration is transactional:
+`HotkeyService` owns the Windows message loop used for global hotkey registration. A healthy active set is reconfigured transactionally:
 
 1. validate the complete candidate set;
 2. unregister the current set;
 3. register every candidate binding;
-4. restore the previous set if any registration fails;
-5. persist settings only after registration succeeds.
+4. restore the previous set if any candidate registration fails;
+5. persist settings only after the new complete set is active.
 
-Initial registration uses the same all-or-nothing rule. If Windows rejects a configured binding because another process already owns it, startup remains non-fatal: the partial set is removed, the hotkey message window stays alive, and `AppController` reports the conflict. A later successful reconfiguration can activate the complete set without restarting SCapturer.
+Initial registration is also all-or-nothing. If Windows rejects a configured binding because another process already owns it, startup remains non-fatal: the partial set is removed, the hotkey message window stays alive, and `AppController` marks the global set inactive.
+
+Recovery from that inactive state is deliberately staged. Each valid user edit is persisted first, then SCapturer retries registration of the complete desired set. If another configured chord is still occupied, no partial set is left active but the repaired binding remains saved and visible. The user can therefore repair multiple conflicts one at a time. As soon as all four desired bindings are available, the complete set activates without restarting SCapturer.
+
+`ConsoleUi` captures replacement chords directly from keyboard input. Ctrl, Shift, and Alt come from the console key event; the Windows modifier is sampled from the Win32 key state. `Esc` with no modifiers cancels the capture.
 
 `AppInstanceService` provides current-user named-pipe IPC. A secondary invocation detects the existing instance through the local mutex, forwards one semantic command, and exits. The IPC server only enqueues commands; `AppController` executes them on its controller loop.
 
@@ -193,7 +197,7 @@ See [Background and autostart](BACKGROUND_AND_AUTOSTART.md).
 
 - active page and retained selection;
 - keyboard interpretation;
-- blocking text prompts;
+- blocking folder text prompts and hotkey chord capture;
 - page-aware window titles;
 - styled frame construction;
 - differential terminal rendering.

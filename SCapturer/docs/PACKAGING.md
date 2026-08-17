@@ -201,6 +201,26 @@ MSI uninstall preserves:
 
 Screenshots and application data are user-owned and must not be silently deleted by the installer.
 
+## Silent uninstall and reinstall
+
+The MSI can be removed and installed again without displaying Windows Installer UI. Run from the repository root after building the final `0.1.1` package.
+
+Silent uninstall:
+
+```powershell
+$msi=(Resolve-Path '.\dist\release\0.1.1\SCapturer-v0.1.1-win-x64.msi').Path;$p=Start-Process msiexec.exe -ArgumentList "/x `"$msi`" /qn /norestart" -Wait -PassThru;if($p.ExitCode -notin 0,3010){throw "MSI uninstall failed with exit code $($p.ExitCode)"}
+```
+
+Silent install:
+
+```powershell
+$msi=(Resolve-Path '.\dist\release\0.1.1\SCapturer-v0.1.1-win-x64.msi').Path;$p=Start-Process msiexec.exe -ArgumentList "/i `"$msi`" /qn /norestart" -Wait -PassThru;if($p.ExitCode -notin 0,3010){throw "MSI install failed with exit code $($p.ExitCode)"}
+```
+
+`/qn` suppresses installer UI and `/norestart` prevents Windows Installer from initiating a restart. Exit code `3010` means the operation succeeded but Windows reports that a restart is required.
+
+A true uninstall still runs SCapturer's normal uninstall maintenance path: the active process is asked to exit, the current-user autostart registration is removed, and user screenshots, settings, and diagnostics are preserved. Reinstall therefore loads the preserved SCapturer configuration, but autostart must be enabled again explicitly.
+
 ## Manual publish
 
 To produce only the self-contained executable:
